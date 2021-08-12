@@ -30,15 +30,15 @@ pub use nrf52833_pac as pac;
 pub use nrf52840_pac as pac;
 
 #[cfg(feature = "5340")]
-pub use nrf5340_app_pac as app_pac;
+pub use nrf5340_app_pac as pac;
 
 #[cfg(feature = "5340")]
 pub use nrf5340_net_pac as net_pac;
 
 pub mod clocks;
 pub mod gpio;
-pub mod gpiote;
-pub mod twim;
+// pub mod gpiote;
+// pub mod twim;
 
 /// Length of Nordic EasyDMA differs for MCUs
 pub mod target_constants {

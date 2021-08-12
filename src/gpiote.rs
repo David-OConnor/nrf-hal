@@ -19,7 +19,7 @@ use {
         Floating, Input, Level, OpenDrain, Output, Pin, Port, PullDown, PullUp, PushPull,
     },
     crate::pac::gpiote::{EVENTS_IN, EVENTS_PORT, TASKS_OUT},
-    crate::pac::{generic::Reg, GPIOTE},
+    crate::pac::GPIOTE,
 };
 
 #[cfg(not(feature = "51"))]
