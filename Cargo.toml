@@ -41,6 +41,16 @@ chrono = { version = "0.4.19", default-features = false }
 cfg-if = "1.0.0"  # if/else blocks for feature-gating
 paste = "1.0.4"  # Token pasting, to make macros easier
 
+# todo: Remove these dependencies below A/R
+fixed = "1.0.0"
+rand_core = "0.6.3"
+embedded-dma = "0.1.1"
+embedded-storage = "0.1.0"
+void = { version = "1.0.2", default-features = false }
+cast = { version = "0.2.3", default-features = false }
+
+nrf-usbd = { version = "0.1.0", default-features = false, optional = true }
+
 [package.metadata.docs.rs]
 features = ["52840", "52840-rt", "embedded-hal"]
 targets = ["thumbv7em-none-eabihf"]
@@ -56,6 +66,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 52833-rt = ["nrf52833-pac/rt"]
 52840-rt = ["nrf52840-pac/rt"]
 5340-rt = ["nrf5340-app-pac/rt", "nrf5340-net-pac/rt"]
+
+usb = ["nrf-usbd"]
 
 # Features defined here are those taken from the SVD-generated nrf PACs.
 # The "52" etc designator at the end lets us group by family when feature-gating.

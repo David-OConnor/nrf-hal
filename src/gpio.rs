@@ -72,7 +72,9 @@ use crate::pac::{p0 as gpio, P0};
 #[cfg(any(feature = "52833", feature = "52840"))]
 use crate::pac::P1;
 
-use crate::hal::digital::v2::{InputPin, OutputPin, StatefulOutputPin};
+#[cfg(feature = "embedded-hal")]
+use embedded_hal::digital::v2::{InputPin, OutputPin, StatefulOutputPin};
+
 use void::Void;
 
 impl<MODE> Pin<MODE> {
@@ -369,7 +371,9 @@ macro_rules! gpio {
                 $PX
             };
 
-            use crate::hal::digital::v2::{OutputPin, StatefulOutputPin, InputPin};
+            #[cfg(feature = "embedded-hal")]
+            use embedded_hal::digital::v2::{InputPin, OutputPin, StatefulOutputPin};
+            
             use void::Void;
 
 
