@@ -9,6 +9,8 @@
 use core::ops::Deref;
 use core::sync::atomic::{compiler_fence, Ordering::SeqCst};
 
+use crate::gpio::Pin;
+
 #[cfg(feature = "9160")]
 use crate::pac::{
     twim0_ns as twim0, TWIM0_NS as TWIM0, TWIM1_NS as TWIM1, TWIM2_NS as TWIM2, TWIM3_NS as TWIM3,
@@ -17,11 +19,21 @@ use crate::pac::{
 #[cfg(not(feature = "9160"))]
 use crate::pac::{twim0, TWIM0};
 
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(any(
+    feature = "52832",
+    feature = "52833",
+    feature = "52840",
+    feature = "53"
+))]
 use crate::pac::TWIM1;
 
+#[cfg(feature = "53")]
+use crate::pac::TWIM2;
+
+#[cfg(feature = "53")]
+use crate::pac::TWIM3;
+
 use crate::{
-    gpio::{Floating, Input, Pin},
     slice_in_ram, slice_in_ram_or,
     target_constants::{EASY_DMA_SIZE, FORCE_COPY_BUFFER_SIZE},
 };
@@ -43,38 +55,22 @@ impl<T> Twim<T>
 where
     T: Instance,
 {
-    pub fn new(twim: T, pins: Pins, frequency: Frequency) -> Self {
-        // The TWIM peripheral requires the pins to be in a mode that is not
-        // exposed through the GPIO API, and might it might not make sense to
-        // expose it there.
-        //
-        // Until we've figured out what to do about this, let's just configure
-        // the pins through the raw peripheral API. All of the following is
-        // safe, as we own the pins now and have exclusive access to their
-        // registers.
-        for &pin in &[&pins.scl, &pins.sda] {
-            pin.conf().write(|w| {
-                w.dir()
-                    .input()
-                    .input()
-                    .connect()
-                    .pull()
-                    .pullup()
-                    .drive()
-                    .s0d1()
-                    .sense()
-                    .disabled()
-            });
-        }
-
+    /// Initialize a TWIM (Two-Wire Interface Master) peripheral.
+    pub fn new(twim: T, scl_pin: &Pin, sda_pin: &Pin, frequency: Frequency) -> Self {
         // Select pins.
-        twim.psel.scl.write(|w| {
-            unsafe { w.bits(pins.scl.psel_bits()) };
-            w.connect().connected()
+
+        // todo: You may need to feature gate the port setting for variants with more
+        // todo than P0 and P1 (ie 53)
+        twim.psel.scl.write(|w| unsafe {
+            w.port().bit(scl_pin.port as u8 != 0);
+            w.pin().bits(scl_pin.pin);
+            w.connect().set_bit()
         });
-        twim.psel.sda.write(|w| {
-            unsafe { w.bits(pins.sda.psel_bits()) };
-            w.connect().connected()
+
+        twim.psel.sda.write(|w| unsafe {
+            w.port().bit(sda_pin.port as u8 != 0);
+            w.pin().bits(sda_pin.pin);
+            w.connect().set_bit()
         });
 
         // Enable TWIM instance.
@@ -385,6 +381,8 @@ where
     }
 }
 
+#[cfg(feature = "embedded-hal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "embedded-hal")))]
 impl<T> embedded_hal::blocking::i2c::Write for Twim<T>
 where
     T: Instance,
@@ -405,6 +403,8 @@ where
     }
 }
 
+#[cfg(feature = "embedded-hal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "embedded-hal")))]
 impl<T> embedded_hal::blocking::i2c::Read for Twim<T>
 where
     T: Instance,
@@ -416,6 +416,8 @@ where
     }
 }
 
+#[cfg(feature = "embedded-hal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "embedded-hal")))]
 impl<T> embedded_hal::blocking::i2c::WriteRead for Twim<T>
 where
     T: Instance,
@@ -434,17 +436,6 @@ where
             self.copy_write_then_read(addr, bytes, buffer)
         }
     }
-}
-
-/// The pins used by the TWIM peripheral.
-///
-/// Currently, only P0 pins are supported.
-pub struct Pins {
-    // Serial Clock Line.
-    pub scl: Pin<Input<Floating>>,
-
-    // Serial Data Line.
-    pub sda: Pin<Input<Floating>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -475,7 +466,8 @@ impl Instance for TWIM0 {}
     feature = "52832",
     feature = "52833",
     feature = "52840",
-    feature = "9160"
+    feature = "9160",
+    feature = "53",
 ))]
 mod _twim1 {
     use super::*;
@@ -483,14 +475,14 @@ mod _twim1 {
     impl Instance for TWIM1 {}
 }
 
-#[cfg(feature = "9160")]
+#[cfg(any(feature = "9160", feature = "53"))]
 mod _twim2 {
     use super::*;
     impl sealed::Sealed for TWIM2 {}
     impl Instance for TWIM2 {}
 }
 
-#[cfg(feature = "9160")]
+#[cfg(any(feature = "9160", feature = "53"))]
 mod _twim3 {
     use super::*;
     impl sealed::Sealed for TWIM3 {}

@@ -4,14 +4,17 @@
 #[cfg(feature = "51")]
 use crate::pac::{gpio, GPIO as P0};
 
-#[cfg(feature = "9160")]
+#[cfg(any(feature = "9160", feature = "53"))]
 use crate::pac::{p0_ns as gpio, P0_NS as P0};
 
-#[cfg(not(any(feature = "9160", feature = "51")))]
+#[cfg(not(any(feature = "9160", feature = "51", feature = "53")))]
 use crate::pac::{p0 as gpio, P0};
 
 #[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
 use crate::pac::P1;
+
+#[cfg(feature = "53")]
+use crate::pac::{p1_NS as P1, P0_S as P2, P1_S as P3};
 
 #[cfg(feature = "embedded-hal")]
 use embedded_hal::digital::v2::{InputPin, OutputPin, ToggleableOutputPin};
@@ -20,13 +23,18 @@ use embedded_hal::digital::v2::{InputPin, OutputPin, ToggleableOutputPin};
 use core::convert::Infallible;
 
 /// A GPIO port with up to 32 pins.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum Port {
     /// Port 0, available on all nRF52 and nRF51 MCUs.
-    Port0,
+    P0 = 0,
     /// Port 1, only available on some nRF52 MCUs.
     #[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
-    Port1,
+    P1 = 1,
+    #[cfg(feature = "53")]
+    P2 = 2,
+    #[cfg(feature = "53")]
+    P3 = 3,
 }
 
 #[derive(Copy, Clone)]
@@ -81,15 +89,16 @@ pub enum Drive {
     H0S1 = 1,
     /// Standard '0', high drive '1'
     S0H1 = 2,
-    /// High drive '0', high 'drive '1'
+    /// High drive '0', high drive '1'
     H0H1 = 3,
-    /// Disconnect '0' standard '1' (normally used for wired-or-connections
+    /// Disconnect '0' standard '1' (normally used for wired-or-connections)
     D0S1 = 4,
-    /// Disconnect '0' high drive '1' (normally used for wired-or-connections
+    /// Disconnect '0' high drive '1' (normally used for wired-or-connections)
     D0H1 = 5,
-    /// Standard '0'. disconnect '1' (normally used for wired-or-connections
+    /// Standard '0'. disconnect '1' (normally used for wired-or-connections)
+    /// Use this setting for "open drain" outputs.
     S0D1 = 6,
-    /// High drive '0' disconnect '1' (normally used for wired-or-connections
+    /// High drive '0' disconnect '1' (normally used for wired-or-connections)
     H0D1 = 7,
 }
 
@@ -113,13 +122,13 @@ pub enum Latch {
 
 /// Represents a single GPIO pin. Allows configuration, and reading/setting state.
 pub struct Pin {
-    port: Port,
-    pin: u8,
+    pub port: Port,
+    pub pin: u8,
 }
 
 impl Pin {
     /// Create a new pin, with a specific direction.
-    fn new(port: Port, pin: u8, dir: Dir) -> Self {
+    pub fn new(port: Port, pin: u8, dir: Dir) -> Self {
         let mut result = Self {
             // pin_port: pin | port as u8,
             port,
@@ -133,9 +142,13 @@ impl Pin {
     /// Internal function used to access the register block.
     fn regs(&self) -> &gpio::RegisterBlock {
         let ptr = match self.port {
-            Port::Port0 => P0::ptr(),
-            #[cfg(any(feature = "52833", feature = "52840"))]
-            Port::Port1 => P1::ptr(),
+            Port::P0 => P0::ptr(),
+            #[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
+            Port::P1 => P1::ptr(),
+            #[cfg(feature = "53")]
+            Port::P2 => P2::ptr(),
+            #[cfg(feature = "53")]
+            Port::P3 => P3::ptr(),
         };
 
         unsafe { &*ptr }
@@ -207,7 +220,11 @@ impl Pin {
         self.regs().pin_cnf[self.pin as usize].modify(|_, w| unsafe { w.pull().bits(pull as u8) })
     }
 
-    /// Connect or disconnect input buffer. Sets `PIN_CNF` register, `INPUT` field.
+    /// Connect or disconnect input buffer.
+    /// A GPIO pin input buffer can be disconnected from the pin to enable power savings when the pin is not
+    /// used as an input, see GPIO port and the GPIO pin details on page 148. Input buffers must be connected
+    /// to get a valid input value in the IN register, and for the sense mechanism to get access to the pin.
+    /// Sets `PIN_CNF` register, `INPUT` field.
     pub fn input_buf(&mut self, input: InputBuf) {
         self.regs().pin_cnf[self.pin as usize].modify(|_, w| w.input().bit(input as u8 != 0))
     }

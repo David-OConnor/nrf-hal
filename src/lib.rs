@@ -37,8 +37,11 @@ pub use nrf5340_net_pac as net_pac;
 
 pub mod clocks;
 pub mod gpio;
-// pub mod gpiote;
-// pub mod twim;
+pub mod gpiote;
+pub mod twim;
+
+#[cfg(feature = "usb")]
+pub mod usb;
 
 /// Length of Nordic EasyDMA differs for MCUs
 pub mod target_constants {

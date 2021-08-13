@@ -11,13 +11,11 @@ use crate::pac::GPIO as P0;
 #[cfg(not(feature = "51"))]
 use crate::pac::P0;
 
-#[cfg(any(feature = "52833", feature = "52840"))]
+#[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
 use crate::pac::P1;
 
 use {
-    crate::gpio::{
-        Floating, Input, Level, OpenDrain, Output, Pin, Port, PullDown, PullUp, PushPull,
-    },
+    crate::gpio::{Pin, PinState, Port},
     crate::pac::gpiote::{EVENTS_IN, EVENTS_PORT, TASKS_OUT},
     crate::pac::GPIOTE,
 };
@@ -101,7 +99,7 @@ pub struct GpioteChannel<'a> {
 
 impl<'a> GpioteChannel<'_> {
     /// Configures the channel as an event input with associated pin.
-    pub fn input_pin<P: GpioteInputPin>(&'a self, pin: &'a P) -> GpioteChannelEvent<'a, P> {
+    pub fn input_pin(&'a self, pin: &'a Pin) -> GpioteChannelEvent<'a> {
         GpioteChannelEvent {
             gpiote: &self.gpiote,
             pin: pin,
@@ -109,7 +107,7 @@ impl<'a> GpioteChannel<'_> {
         }
     }
     /// Configures the channel as a task output with associated pin.
-    pub fn output_pin<P: GpioteOutputPin>(&'a self, pin: P) -> GpioteTask<'a, P> {
+    pub fn output_pin(&'a self, pin: Pin) -> GpioteTask<'a> {
         GpioteTask {
             gpiote: &self.gpiote,
             pin: pin,
@@ -171,7 +169,7 @@ pub struct GpiotePort<'a> {
 
 impl<'a> GpiotePort<'_> {
     /// Configures associated pin as port event trigger.
-    pub fn input_pin<P: GpioteInputPin>(&'a self, pin: &'a P) -> GpiotePortEvent<'a, P> {
+    pub fn input_pin(&'a self, pin: &'a Pin) -> GpiotePortEvent<'a> {
         GpiotePortEvent { pin }
     }
     /// Enables GPIOTE interrupt for port events.
@@ -196,13 +194,13 @@ impl<'a> GpiotePort<'_> {
     }
 }
 
-pub struct GpioteChannelEvent<'a, P: GpioteInputPin> {
+pub struct GpioteChannelEvent<'a> {
     gpiote: &'a GPIOTE,
-    pin: &'a P,
+    pin: &'a Pin,
     channel: usize,
 }
 
-impl<'a, P: GpioteInputPin> GpioteChannelEvent<'_, P> {
+impl<'a> GpioteChannelEvent<'_> {
     /// Generates event on falling edge.
     pub fn hi_to_lo(&self) -> &Self {
         config_channel_event_pin(self.gpiote, self.channel, self.pin, EventPolarity::HiToLo);
@@ -235,10 +233,10 @@ impl<'a, P: GpioteInputPin> GpioteChannelEvent<'_, P> {
     }
 }
 
-fn config_channel_event_pin<P: GpioteInputPin>(
+fn config_channel_event_pin(
     gpiote: &GPIOTE,
     channel: usize,
-    pin: &P,
+    pin: &Pin,
     trigger_mode: EventPolarity,
 ) {
     // Config pin as event-triggering input for specified edge transition trigger mode.
@@ -252,21 +250,25 @@ fn config_channel_event_pin<P: GpioteInputPin>(
 
         #[cfg(any(feature = "52833", feature = "52840"))]
         {
-            match pin.port() {
-                Port::Port0 => w.port().clear_bit(),
-                Port::Port1 => w.port().set_bit(),
+            match pin.port {
+                Port::P0 => w.port().clear_bit(),
+                Port::P1 => w.port().set_bit(),
+                #[cfg(feature = "53")]
+                Port::P2 => unimplemented!(), // todo
+                #[cfg(feature = "53")]
+                Port::P2 => unimplemented!(), // todo
             };
         }
 
-        unsafe { w.psel().bits(pin.pin()) }
+        unsafe { w.psel().bits(pin.pin) }
     });
 }
 
-pub struct GpiotePortEvent<'a, P: GpioteInputPin> {
-    pin: &'a P,
+pub struct GpiotePortEvent<'a> {
+    pin: &'a Pin,
 }
 
-impl<'a, P: GpioteInputPin> GpiotePortEvent<'_, P> {
+impl<'a> GpiotePortEvent<'_> {
     /// Generates event on pin low.
     pub fn low(&self) {
         config_port_event_pin(self.pin, PortEventSense::Low);
@@ -281,17 +283,17 @@ impl<'a, P: GpioteInputPin> GpiotePortEvent<'_, P> {
     }
 }
 
-fn config_port_event_pin<P: GpioteInputPin>(pin: &P, sense: PortEventSense) {
+fn config_port_event_pin(pin: &Pin, sense: PortEventSense) {
     // Set pin sense to specified mode to trigger port events.
     unsafe {
         &(*{
-            match pin.port() {
-                Port::Port0 => P0::ptr(),
+            match pin.port {
+                Port::P0 => P0::ptr(),
                 #[cfg(any(feature = "52833", feature = "52840"))]
-                Port::Port1 => P1::ptr(),
+                Port::P1 => P1::ptr(),
             }
         })
-        .pin_cnf[pin.pin() as usize]
+        .pin_cnf[pin.pin as usize]
     }
     .modify(|_r, w| match sense {
         PortEventSense::Disabled => w.sense().disabled(),
@@ -300,14 +302,14 @@ fn config_port_event_pin<P: GpioteInputPin>(pin: &P, sense: PortEventSense) {
     });
 }
 
-pub struct GpioteTask<'a, P: GpioteOutputPin> {
+pub struct GpioteTask<'a> {
     gpiote: &'a GPIOTE,
-    pin: P,
+    pin: Pin,
     channel: usize,
     task_out_polarity: TaskOutPolarity,
 }
 
-impl<'a, P: GpioteOutputPin> GpioteTask<'_, P> {
+impl<'a> GpioteTask<'_> {
     /// Sets initial task output pin state to high.
     pub fn init_high(&self) {
         config_channel_task_pin(
@@ -315,7 +317,7 @@ impl<'a, P: GpioteOutputPin> GpioteTask<'_, P> {
             self.channel,
             &self.pin,
             &self.task_out_polarity,
-            Level::High,
+            PinState::High,
         );
     }
     /// Sets initial task output pin state to low.
@@ -325,7 +327,7 @@ impl<'a, P: GpioteOutputPin> GpioteTask<'_, P> {
             self.channel,
             &self.pin,
             &self.task_out_polarity,
-            Level::Low,
+            PinState::Low,
         );
     }
     /// Configures polarity of the `task out` operation.
@@ -335,18 +337,18 @@ impl<'a, P: GpioteOutputPin> GpioteTask<'_, P> {
     }
 }
 
-fn config_channel_task_pin<P: GpioteOutputPin>(
+fn config_channel_task_pin(
     gpiote: &GPIOTE,
     channel: usize,
-    pin: &P,
+    pin: &Pin,
     task_out_polarity: &TaskOutPolarity,
-    init_out: Level,
+    init_out: PinState,
 ) {
     // Config pin as task output with specified initial state and task out polarity.
     gpiote.config[channel].write(|w| {
         match init_out {
-            Level::High => w.mode().task().outinit().high(),
-            Level::Low => w.mode().task().outinit().low(),
+            PinState::High => w.mode().task().outinit().high(),
+            PinState::Low => w.mode().task().outinit().low(),
         };
         match task_out_polarity {
             TaskOutPolarity::Set => w.polarity().lo_to_hi(),
@@ -356,13 +358,17 @@ fn config_channel_task_pin<P: GpioteOutputPin>(
 
         #[cfg(any(feature = "52833", feature = "52840"))]
         {
-            match pin.port() {
-                Port::Port0 => w.port().clear_bit(),
-                Port::Port1 => w.port().set_bit(),
+            match pin.port {
+                Port::P0 => w.port().clear_bit(),
+                Port::P1 => w.port().set_bit(),
+                #[cfg(feature = "53")]
+                Port::P2 => unimplemented!(), // todo
+                #[cfg(feature = "53")]
+                Port::P3 => unimplemented!(), // todo
             };
         }
 
-        unsafe { w.psel().bits(pin.pin()) }
+        unsafe { w.psel().bits(pin.pin) }
     });
 }
 
@@ -384,61 +390,4 @@ pub enum PortEventSense {
     Disabled,
     High,
     Low,
-}
-
-/// Trait to represent event input pin.
-pub trait GpioteInputPin {
-    fn pin(&self) -> u8;
-    fn port(&self) -> Port;
-}
-
-impl GpioteInputPin for Pin<Input<PullUp>> {
-    fn pin(&self) -> u8 {
-        self.pin()
-    }
-    fn port(&self) -> Port {
-        self.port()
-    }
-}
-
-impl GpioteInputPin for Pin<Input<PullDown>> {
-    fn pin(&self) -> u8 {
-        self.pin()
-    }
-    fn port(&self) -> Port {
-        self.port()
-    }
-}
-
-impl GpioteInputPin for Pin<Input<Floating>> {
-    fn pin(&self) -> u8 {
-        self.pin()
-    }
-    fn port(&self) -> Port {
-        self.port()
-    }
-}
-
-/// Trait to represent task output pin.
-pub trait GpioteOutputPin {
-    fn pin(&self) -> u8;
-    fn port(&self) -> Port;
-}
-
-impl GpioteOutputPin for Pin<Output<OpenDrain>> {
-    fn pin(&self) -> u8 {
-        self.pin()
-    }
-    fn port(&self) -> Port {
-        self.port()
-    }
-}
-
-impl GpioteOutputPin for Pin<Output<PushPull>> {
-    fn pin(&self) -> u8 {
-        self.pin()
-    }
-    fn port(&self) -> Port {
-        self.port()
-    }
 }
