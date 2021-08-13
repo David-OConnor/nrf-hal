@@ -216,26 +216,22 @@ impl Pin {
     /// Set internal pull resistor: Pull up, pull down, or disabled. Sets the `PIN_CNF`
     /// register, `PULL` field.
     pub fn pull(&mut self, pull: Pull) {
-        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
-        self.regs().pin_cnf[self.pin as usize].write(|w| unsafe { w.pull().bits(pull as u8) })
+        self.regs().pin_cnf[self.pin as usize].modify(|_, w| unsafe { w.pull().bits(pull as u8) })
     }
 
     /// Connect or disconnect input buffer. Sets `PIN_CNF` register, `INPUT` field.
     pub fn input_buf(&mut self, input: InputBuf) {
-        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
-        self.regs().pin_cnf[self.pin as usize].write(|w| w.input().bit(input as u8 != 0))
+        self.regs().pin_cnf[self.pin as usize].modify(|_, w| w.input().bit(input as u8 != 0))
     }
 
     /// Set drive configuration. Sets `PIN_CNF` register, `DRIVE` field.
     pub fn drive(&mut self, drive: Drive) {
-        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
-        self.regs().pin_cnf[self.pin as usize].write(|w| w.drive().bits(drive as u8))
+        self.regs().pin_cnf[self.pin as usize].modify(|_, w| w.drive().bits(drive as u8))
     }
 
     /// Pin sensing mechanism. Sets `PIN_CNF` register, `SENSE` field.
     pub fn sense(&mut self, sense: Sense) {
-        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
-        self.regs().pin_cnf[self.pin as usize].write(|w| unsafe { w.sense().bits(sense as u8) })
+        self.regs().pin_cnf[self.pin as usize].modify(|_, w| unsafe { w.sense().bits(sense as u8) })
     }
 }
 
