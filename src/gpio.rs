@@ -14,23 +14,31 @@ use crate::pac::{p0 as gpio, P0};
 use crate::pac::P1;
 
 #[cfg(feature = "embedded-hal")]
-use embedded_hal::digital::v2::{InputPin, OutputPin, StatefulOutputPin, ToggleableOutputPin};
+use embedded_hal::digital::v2::{InputPin, OutputPin, ToggleableOutputPin};
 
 #[cfg(feature = "embedded-hal")]
 use core::convert::Infallible;
 
-use void::Void;
+// /// A GPIO port with up to 32 pins.
+// #[derive(Debug, Eq, PartialEq)]
+// #[repr(u8)]
+// pub enum Port {
+//     /// Port 0, available on all nRF52 and nRF51 MCUs.
+//     Port0 = 0x00,
+
+//     /// Port 1, only available on some nRF52 MCUs.
+//     #[cfg(any(feature = "52833", feature = "52840"))]
+//     Port1 = 0x20,
+// }
 
 /// A GPIO port with up to 32 pins.
 #[derive(Debug, Eq, PartialEq)]
-#[repr(u8)]
 pub enum Port {
     /// Port 0, available on all nRF52 and nRF51 MCUs.
-    Port0 = 0x00,
-
+    Port0,
     /// Port 1, only available on some nRF52 MCUs.
     #[cfg(any(feature = "52833", feature = "52840"))]
-    Port1 = 0x20,
+    Port1,
 }
 
 #[derive(Copy, Clone)]
@@ -41,71 +49,82 @@ pub enum Dir {
     Output = 1,
 }
 
-// #[derive(Copy, Clone)]
-// #[repr(u8)]
-// /// Values for `GPIOx_MODER`
-// pub enum PinMode {
-//     Input,
-//     Output,
-//     Alt(u8),
-//     Analog,
-// }
-
-// impl PinMode {
-//     /// We use this function to find the value bits due to being unable to repr(u8) with
-//     /// the wrapped `AltFn` value.
-//     fn val(&self) -> u8 {
-//         match self {
-//             Self::Input => 0b00,
-//             Self::Output => 0b01,
-//             Self::Alt(_) => 0b10,
-//             Self::Analog => 0b11,
-//         }
-//     }
-// }
-
 #[derive(Copy, Clone)]
 #[repr(u8)]
-/// Values for `_`
-pub enum OutputType {
-    PushPull = 0,
-    OpenDrain = 1,
+/// Values for `PIN_CONF` reg, `INPUT` field.
+pub enum InputBuf {
+    /// Connect input buffer
+    Connect = 0,
+    /// Disconnect input buffer
+    Disconnect = 1,
 }
 
-// #[derive(Copy, Clone)]
-// #[repr(u8)]
-// /// Values for `GPIOx_OSPEEDR`. This configures I/O output speed. See the user manual
-// /// for your MCU for what speeds these are. Note that Fast speed (0b10) is not
-// /// available on all STM32 families.
-// pub enum OutputSpeed {
-//     Low = 0b00,
-//     Medium = 0b01,
-//     #[cfg(not(feature = "f3"))]
-//     Fast = 0b10,
-//     High = 0b11,
-// }
-
 #[derive(Copy, Clone)]
 #[repr(u8)]
-/// Values for `_`
+/// Values for `PIN_CONF` reg, `PULL` field.
 pub enum Pull {
-    Floating = 0b00,
-    Up = 0b01,
-    Dn = 0b10,
+    /// No pull
+    Disabled = 0,
+    /// Pull down on pin
+    Dn = 1,
+    /// Pull up on pin
+    Up = 3,
 }
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
-/// Values for `_`.
+/// Values for `PIN_CONF` reg, `SENSE` field.
+pub enum Sense {
+    /// Disabled
+    Disabled = 0,
+    /// Sense for high level
+    High = 2,
+    /// Sense for low level
+    Low = 3,
+}
+
+#[derive(Copy, Clone)]
+#[repr(u8)]
+/// Drive configuration. Values for `PIN_CONF` reg, `DRIVE` field.
+pub enum Drive {
+    /// Standard '0', standard '1'
+    S0S1 = 0,
+    /// High drive '0', standard '1
+    H0S1 = 1,
+    /// Standard '0', high drive '1'
+    S0H1 = 2,
+    /// High drive '0', high 'drive '1'
+    H0H1 = 3,
+    /// Disconnect '0' standard '1' (normally used for wired-or-connections
+    D0S1 = 4,
+    /// Disconnect '0' high drive '1' (normally used for wired-or-connections
+    D0H1 = 5,
+    /// Standard '0'. disconnect '1' (normally used for wired-or-connections
+    S0D1 = 6,
+    /// High drive '0' disconnect '1' (normally used for wired-or-connections
+    H0D1 = 7,
+}
+
+#[derive(Copy, Clone)]
+#[repr(u8)]
+/// Values for `OUT`, `OUTSET`, `IN` etc.
 pub enum PinState {
     High = 1,
     Low = 0,
 }
 
+#[derive(Copy, Clone)]
+#[repr(u8)]
+/// Values for `Latch` register.
+pub enum Latch {
+    /// Criteria has not been met
+    NotLatched = 0,
+    /// Criteria has been met
+    Latched = 1,
+}
+
 /// Represents a single GPIO pin. Allows configuration, and reading/setting state.
 pub struct Pin {
-    /// 00AB BBBB
-    // pin_port: u8,
     port: Port,
     pin: u8,
 }
@@ -122,15 +141,6 @@ impl Pin {
         result.dir(dir);
         result
     }
-
-    // /// Disconnects the pin.
-    // ///
-    // /// In disconnected mode the pin cannot be used as input or output.
-    // /// It is primarily useful to reduce power usage.
-    // pub fn disconnect(&mut self) {
-    //     // Reset value is disconnected.
-    //     unsafe { &(*$PX::ptr()).pin_cnf[$i] }.reset();
-    // }
 
     /// Internal function used to access the register block.
     fn regs(&self) -> &gpio::RegisterBlock {
@@ -178,6 +188,17 @@ impl Pin {
         self.regs().in_.read().bits() & (1 << self.pin) == 0
     }
 
+    /// Latch register indicating what GPIO pins that have met the criteria set in the PIN_CNF[n].SENSE registers.
+    /// Reads from the the `LATCH` register.
+    pub fn is_latched(&mut self, latch: Latch) -> bool {
+        !(self.regs().latch.read().bits() & (1 << self.pin) == 0)
+    }
+
+    // /// Select between default DETECT signal behavior and LDETECT mode. Sets the `DETECTMODE` register.
+    // pub fn detect_mode(&mut self, det_mode: DetectMode) {
+
+    // }
+
     /// Set the pin's output direction. Sets the `DIRSET` or `DIRCLR` register.
     pub fn dir(&mut self, dir: Dir) {
         match dir {
@@ -192,14 +213,29 @@ impl Pin {
         }
     }
 
-    // /// Set pin mode. Eg, Output, Input, Analog, or Alt. Sets the `MODER` register.
-    // pub fn mode(&mut self) {
-    //     // asdf
-    // }
+    /// Set internal pull resistor: Pull up, pull down, or disabled. Sets the `PIN_CNF`
+    /// register, `PULL` field.
+    pub fn pull(&mut self, pull: Pull) {
+        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
+        self.regs().pin_cnf[self.pin as usize].write(|w| unsafe { w.pull().bits(pull as u8) })
+    }
 
-    /// Set internal pull resistor: Pull up, pull down, or floating. Sets the `_` register.
-    pub fn pull(&mut self) {
-        // self.
+    /// Connect or disconnect input buffer. Sets `PIN_CNF` register, `INPUT` field.
+    pub fn input_buf(&mut self, input: InputBuf) {
+        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
+        self.regs().pin_cnf[self.pin as usize].write(|w| w.input().bit(input as u8 != 0))
+    }
+
+    /// Set drive configuration. Sets `PIN_CNF` register, `DRIVE` field.
+    pub fn drive(&mut self, drive: Drive) {
+        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
+        self.regs().pin_cnf[self.pin as usize].write(|w| w.drive().bits(drive as u8))
+    }
+
+    /// Pin sensing mechanism. Sets `PIN_CNF` register, `SENSE` field.
+    pub fn sense(&mut self, sense: Sense) {
+        // todo: Is this atomic, or does this overwrite other PIN_CNFG fields?
+        self.regs().pin_cnf[self.pin as usize].write(|w| unsafe { w.sense().bits(sense as u8) })
     }
 }
 
