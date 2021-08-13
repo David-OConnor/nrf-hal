@@ -10,7 +10,7 @@ use crate::pac::{p0_ns as gpio, P0_NS as P0};
 #[cfg(not(any(feature = "9160", feature = "51")))]
 use crate::pac::{p0 as gpio, P0};
 
-#[cfg(any(feature = "52833", feature = "52840"))]
+#[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
 use crate::pac::P1;
 
 #[cfg(feature = "embedded-hal")]
@@ -19,25 +19,13 @@ use embedded_hal::digital::v2::{InputPin, OutputPin, ToggleableOutputPin};
 #[cfg(feature = "embedded-hal")]
 use core::convert::Infallible;
 
-// /// A GPIO port with up to 32 pins.
-// #[derive(Debug, Eq, PartialEq)]
-// #[repr(u8)]
-// pub enum Port {
-//     /// Port 0, available on all nRF52 and nRF51 MCUs.
-//     Port0 = 0x00,
-
-//     /// Port 1, only available on some nRF52 MCUs.
-//     #[cfg(any(feature = "52833", feature = "52840"))]
-//     Port1 = 0x20,
-// }
-
 /// A GPIO port with up to 32 pins.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Port {
     /// Port 0, available on all nRF52 and nRF51 MCUs.
     Port0,
     /// Port 1, only available on some nRF52 MCUs.
-    #[cfg(any(feature = "52833", feature = "52840"))]
+    #[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
     Port1,
 }
 
