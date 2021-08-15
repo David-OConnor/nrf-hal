@@ -68,17 +68,16 @@ rustdoc-args = ["--cfg", "docsrs"]
 5340-rt = ["nrf5340-app-pac/rt", "nrf5340-net-pac/rt"]
 
 usb = ["nrf-usbd"]
+embedded_hal = ["embedded-hal"]
 
 # Features defined here are those taken from the SVD-generated nrf PACs.
 # The "52" etc designator at the end lets us group by family when feature-gating.
-
 52810 = ["nrf52810-pac", "52"]
 52811 = ["nrf52811-pac", "52"]
 52832 = ["nrf52833-pac", "52"]
 52833 = ["nrf52833-pac", "52"]
 52840 = ["nrf52840-pac", "52"]
 5340 = ["nrf5340-app-pac", "nrf5340-net-pac", "53"]
-
 
 # These features are used to featured gate sections of code that apply
 # to an entire family.

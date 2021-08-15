@@ -56,20 +56,20 @@ where
     T: Instance,
 {
     /// Initialize a TWIM (Two-Wire Interface Master) peripheral.
-    pub fn new(twim: T, scl_pin: &Pin, sda_pin: &Pin, frequency: Frequency) -> Self {
+    pub fn new(twim: T, scl: &Pin, sda: &Pin, frequency: Frequency) -> Self {
         // Select pins.
 
         // todo: You may need to feature gate the port setting for variants with more
         // todo than P0 and P1 (ie 53)
         twim.psel.scl.write(|w| unsafe {
-            w.port().bit(scl_pin.port as u8 != 0);
-            w.pin().bits(scl_pin.pin);
+            w.port().bit(scl.port as u8 != 0);
+            w.pin().bits(scl.pin);
             w.connect().set_bit()
         });
 
         twim.psel.sda.write(|w| unsafe {
-            w.port().bit(sda_pin.port as u8 != 0);
-            w.pin().bits(sda_pin.pin);
+            w.port().bit(sda.port as u8 != 0);
+            w.pin().bits(sda.pin);
             w.connect().set_bit()
         });
 

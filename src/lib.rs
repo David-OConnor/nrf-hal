@@ -38,10 +38,13 @@ pub use nrf5340_net_pac as net_pac;
 pub mod clocks;
 pub mod gpio;
 pub mod gpiote;
+pub mod spim;
 pub mod twim;
 
 #[cfg(feature = "usb")]
 pub mod usb;
+
+// Modules, functions, and structs below taken directly from `nrf-rs` `nrf-hal`.
 
 /// Length of Nordic EasyDMA differs for MCUs
 pub mod target_constants {
@@ -91,5 +94,28 @@ pub(crate) fn slice_in_ram_or<T>(slice: &[u8], err: T) -> Result<(), T> {
         Ok(())
     } else {
         Err(err)
+    }
+}
+
+/// A handy structure for converting rust slices into ptr and len pairs
+/// for use with EasyDMA. Care must be taken to make sure mutability
+/// guarantees are respected
+#[cfg(not(feature = "51"))]
+pub(crate) struct DmaSlice {
+    ptr: u32,
+    len: u32,
+}
+
+#[cfg(not(feature = "51"))]
+impl DmaSlice {
+    pub fn null() -> Self {
+        Self { ptr: 0, len: 0 }
+    }
+
+    pub fn from_slice(slice: &[u8]) -> Self {
+        Self {
+            ptr: slice.as_ptr() as u32,
+            len: slice.len() as u32,
+        }
     }
 }
