@@ -39,6 +39,7 @@ pub mod clocks;
 pub mod gpio;
 pub mod gpiote;
 pub mod spim;
+pub mod rtc;
 pub mod twim;
 
 #[cfg(feature = "usb")]

@@ -13,7 +13,7 @@ use crate::pac::{spim0_ns as spim0, SPIM0_NS as SPIM0};
 #[cfg(not(feature = "9160"))]
 use crate::pac::{spim0, SPIM0};
 
-pub use spim0::frequency::FREQUENCY_A as Frequency;
+pub use spim0::frequency::FREQUENCY_A as SpimFreq;
 
 use core::iter::repeat_with;
 
@@ -171,10 +171,10 @@ where
 
     pub fn new(
         spim: T,
-        sck: Pin,
-        mosi: Pin,
-        miso: Pin,
-        frequency: Frequency,
+        sck: &Pin,
+        mosi: &Pin,
+        miso: &Pin,
+        frequency: SpimFreq,
         mode: SpiMode,
         orc: u8,
     ) -> Self {

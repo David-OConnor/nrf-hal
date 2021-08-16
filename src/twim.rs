@@ -38,7 +38,7 @@ use crate::{
     target_constants::{EASY_DMA_SIZE, FORCE_COPY_BUFFER_SIZE},
 };
 
-pub use twim0::frequency::FREQUENCY_A as Frequency;
+pub use twim0::frequency::FREQUENCY_A as TwimFreq;
 
 /// Interface to a TWIM instance.
 ///
@@ -56,7 +56,7 @@ where
     T: Instance,
 {
     /// Initialize a TWIM (Two-Wire Interface Master) peripheral.
-    pub fn new(twim: T, scl: &Pin, sda: &Pin, frequency: Frequency) -> Self {
+    pub fn new(twim: T, scl: &Pin, sda: &Pin, frequency: TwimFreq) -> Self {
         // Select pins.
 
         // todo: You may need to feature gate the port setting for variants with more
