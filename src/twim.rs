@@ -350,6 +350,19 @@ where
         Ok(())
     }
 
+    pub fn write_read<'w>(
+        &mut self,
+        addr: u8,
+        bytes: &'w [u8],
+        buffer: &'w mut [u8],
+    ) -> Result<(), Error> {
+        if slice_in_ram(bytes) {
+            self.write_then_read(addr, bytes, buffer)
+        } else {
+            self.copy_write_then_read(addr, bytes, buffer)
+        }
+    }
+
     /// Copy data into RAM and write to an I2C slave, then read data from the slave without
     /// triggering a stop condition between the two.
     ///
@@ -430,11 +443,7 @@ where
         bytes: &'w [u8],
         buffer: &'w mut [u8],
     ) -> Result<(), Error> {
-        if slice_in_ram(bytes) {
-            self.write_then_read(addr, bytes, buffer)
-        } else {
-            self.copy_write_then_read(addr, bytes, buffer)
-        }
+        Twim::write_read(self, addr, bytes, buffer)
     }
 }
 

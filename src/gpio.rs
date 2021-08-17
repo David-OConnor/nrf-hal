@@ -1,13 +1,10 @@
 //! This module provides functionality for General Purpose Input and Output (GPIO) pins,
 //! including all GPIO register functions.
 
-#[cfg(feature = "51")]
-use crate::pac::{gpio, GPIO as P0};
-
 #[cfg(any(feature = "9160", feature = "53"))]
 use crate::pac::{p0_ns as gpio, P0_NS as P0};
 
-#[cfg(not(any(feature = "9160", feature = "51", feature = "53")))]
+#[cfg(not(any(feature = "9160", feature = "53")))]
 use crate::pac::{p0 as gpio, P0};
 
 #[cfg(any(feature = "52833", feature = "52840", feature = "53"))]

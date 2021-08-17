@@ -5,10 +5,6 @@
 //! The GPIO tasks and events (GPIOTE) module provides functionality for accessing GPIO pins using
 //! tasks and events.
 
-#[cfg(feature = "51")]
-use crate::pac::GPIO as P0;
-
-#[cfg(not(feature = "51"))]
 use crate::pac::P0;
 
 #[cfg(any(feature = "52833", feature = "52840", feature = "53"))]
@@ -20,13 +16,9 @@ use {
     crate::pac::GPIOTE,
 };
 
-#[cfg(not(feature = "51"))]
 use crate::pac::gpiote::{TASKS_CLR, TASKS_SET};
 
-#[cfg(not(feature = "51"))]
 const NUM_CHANNELS: usize = 8;
-#[cfg(feature = "51")]
-const NUM_CHANNELS: usize = 4;
 
 /// A safe wrapper around the GPIOTE peripheral.
 pub struct Gpiote {
@@ -57,19 +49,15 @@ impl Gpiote {
     pub fn channel3(&self) -> GpioteChannel {
         self.channel(3)
     }
-    #[cfg(not(feature = "51"))]
     pub fn channel4(&self) -> GpioteChannel {
         self.channel(4)
     }
-    #[cfg(not(feature = "51"))]
     pub fn channel5(&self) -> GpioteChannel {
         self.channel(5)
     }
-    #[cfg(not(feature = "51"))]
     pub fn channel6(&self) -> GpioteChannel {
         self.channel(6)
     }
-    #[cfg(not(feature = "51"))]
     pub fn channel7(&self) -> GpioteChannel {
         self.channel(7)
     }
@@ -130,12 +118,10 @@ impl<'a> GpioteChannel<'_> {
         self.gpiote.tasks_out[self.channel].write(|w| unsafe { w.bits(1) });
     }
     /// Triggers `task set` (set associated pin high).
-    #[cfg(not(feature = "51"))]
     pub fn set(&self) {
         self.gpiote.tasks_set[self.channel].write(|w| unsafe { w.bits(1) });
     }
     /// Triggers `task clear` (set associated pin low).
-    #[cfg(not(feature = "51"))]
     pub fn clear(&self) {
         self.gpiote.tasks_clr[self.channel].write(|w| unsafe { w.bits(1) });
     }
@@ -151,13 +137,11 @@ impl<'a> GpioteChannel<'_> {
     }
 
     /// Returns reference to task_clr endpoint for PPI.
-    #[cfg(not(feature = "51"))]
     pub fn task_clr(&self) -> &TASKS_CLR {
         &self.gpiote.tasks_clr[self.channel]
     }
 
     /// Returns reference to task_set endpoint for PPI.
-    #[cfg(not(feature = "51"))]
     pub fn task_set(&self) -> &TASKS_SET {
         &self.gpiote.tasks_set[self.channel]
     }

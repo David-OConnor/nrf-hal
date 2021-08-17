@@ -12,7 +12,11 @@ use core::ops::Deref;
 use core::sync::atomic::{compiler_fence, Ordering::SeqCst};
 
 #[cfg(feature = "embedded-hal")]
-use embedded_hal::{blocking::serial as bserial, digital::v2::OutputPin, serial};
+use embedded_hal::{
+    blocking::serial as bserial,
+    digital::v2::OutputPin,
+    serial::{self, Write},
+};
 
 #[cfg(any(feature = "52833", feature = "52840"))]
 use crate::pac::UARTE1;

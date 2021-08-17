@@ -16,13 +16,14 @@ use crate::pac::{
 
 #[cfg(not(feature = "9160"))]
 use crate::pac::{
-    generic::Reg,
     timer0::{
         RegisterBlock as RegBlock0, EVENTS_COMPARE, TASKS_CAPTURE, TASKS_CLEAR, TASKS_COUNT,
         TASKS_START, TASKS_STOP,
     },
     Interrupt, TIMER0, TIMER1, TIMER2,
 };
+
+#[cfg(feature = "embedded-hal")]
 use cast::u32;
 
 #[cfg(feature = "embedded-hal")]
@@ -267,7 +268,7 @@ where
     where
         Time: Into<Self::Time>,
     {
-        Timer::start(self, cycles);
+        Timer::start(self, cycles.into());
     }
 
     /// Wait for the timer to stop.
@@ -392,14 +393,10 @@ pub trait Instance: sealed::Sealed {
 
         // Configure timer to trigger EVENTS_COMPARE when given number of cycles
         // is reached.
-        #[cfg(not(feature = "51"))]
         self.as_timer0().cc[0].write(|w|
             // The timer mode was set to 32 bits above, so all possible values
             // of `cycles` are valid.
             unsafe { w.cc().bits(cycles.into()) });
-
-        #[cfg(feature = "51")]
-        self.as_timer0().cc[0].write(|w| unsafe { w.bits(cycles.into()) });
 
         // Clear the counter value.
         self.as_timer0().tasks_clear.write(|w| unsafe { w.bits(1) });

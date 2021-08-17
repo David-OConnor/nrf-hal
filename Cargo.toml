@@ -67,6 +67,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 52840-rt = ["nrf52840-pac/rt"]
 5340-rt = ["nrf5340-app-pac/rt", "nrf5340-net-pac/rt"]
 
+# todo: 91 support.
+
 usb = ["nrf-usbd"]
 embedded_hal = ["embedded-hal"]
 
