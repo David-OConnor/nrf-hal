@@ -7,7 +7,11 @@ This library provides high-level access to nRF-52 and nRF-53 peripherals. WIP. U
 a similar API to [STM32-HAL](https://github.com/David-OConnor/stm32-hal);
 designed to be interchangeable when able.
 
-## Most features missing!
+## Legacy features are unsupported
+This library does not support the TWI, SPI, and UART peripherals; it only supports
+their newer counterparts: TWIM[S], SPIM[s], and UARTE.
+
+## Many features are missing
 This is currently intended to use the specific features required by AnyLeaf projects
 that use nrf-52. It may be expanded to be more general at some point in the future,
 but that's not on the near-term road map. Please use the [nrf-rs](https://github.com/nrf-rs) libraries instead.
@@ -15,6 +19,9 @@ but that's not on the near-term road map. Please use the [nrf-rs](https://github
 ## Currently based on [nrf-rs](https://github.com/nrf-rs/nrf-hal), with much code taken directly from it.
 Uses [Embassy's nrf-softdevice](https://github.com/embassy-rs/nrf-softdevice)
 for Bluetooth functionality.
+
+## Uses the [ESB library](https://github.com/thalesfragoso/esb) for Nordic ShockBurst wireless communications.
+(Currently unimplemented, but compatible if set up in user code.)
 
 ## Getting started
 Review the [syntax overview example](https://github.com/David-OConnor/stm32-hal/tree/main/examples/syntax_overview)
@@ -45,7 +52,7 @@ use nrf_hal::{
     gpio::{Pin, Port, Dir, Drive},
     twim::{Twim, TwimFreq},
     low_power,
-    timer::{Timer, TimerInterrupt},
+    // timer::{Timer, TimerInterrupt},
 };
 
 #[entry]
@@ -53,7 +60,7 @@ fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().unwrap();
     let mut dp = pac::Peripherals::take().unwrap();
 
-    let _clock_cfg = Clocks::new(dp.CLOCK);
+    let clocks = Clocks::new(dp.CLOCK);
 
     let mut p15 = Pin::new(Port::P0, 15, Dir::Output);
     p15.set_high();
@@ -61,10 +68,10 @@ fn main() -> ! {
     // let mut timer = Timer::new_tim3(dp.TIM3, 0.2, &clock_cfg);
     // timer.enable_interrupt(TimerInterrupt::Update);
 
-    let mut scl = Pin::new(Port::P0, 6, Dir::Output);
+    let mut scl = Pin::new(Port::P0, 0, Dir::Output);
     scl.drive(Drive::S0D1);
 
-    let mut sda = Pin::new(Port::P0, 7, Dir::Output);
+    let mut sda = Pin::new(Port::P0, 1, Dir::Output);
     sda.drive(Drive::S0D1);
 
     let twim = Twim::new(dp.TWIM0, &scl, &sda, TwimFreq::K100);
