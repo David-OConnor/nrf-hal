@@ -64,27 +64,43 @@ where
         // Select pins
 
         uarte.psel.rxd.write(|w| unsafe {
+            #[cfg(not(any(
+                feature = "52810",
+                feature = "52811",
+                feature = "52832",
+                feature = "53"
+            )))]
             w.port().bit(rxd.port as u8 != 0);
+            #[cfg(feature = "53")]
+            w.port().bits(rxd.port as u8);
             w.pin().bits(rxd.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         uarte.psel.txd.write(|w| unsafe {
+            #[cfg(not(any(
+                feature = "52810",
+                feature = "52811",
+                feature = "52832",
+                feature = "53"
+            )))]
             w.port().bit(txd.port as u8 != 0);
+            #[cfg(feature = "53")]
+            w.port().bits(txd.port as u8);
             w.pin().bits(txd.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         // todo: Impl cts and rts optionally
         // uarte.psel.cts.write(|w| unsafe {
         //     w.port().bit(miso.port as u8 != 0);
         //     w.pin().bits(miso.pin);
-        //     w.connect().set_bit()
+        //     w.connect().clear_bit()
         // });
         // uarte.psel.rts.write(|w| unsafe {
         //     w.port().bit(miso.port as u8 != 0);
         //     w.pin().bits(miso.pin);
-        //     w.connect().set_bit()
+        //     w.connect().clear_bit()
         // });
 
         // uarte.psel.rxd.write(|w| {

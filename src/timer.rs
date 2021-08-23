@@ -36,9 +36,10 @@ use embedded_hal::{
 use nb::{self, block};
 use void::{unreachable, Void};
 
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 use crate::pac::{TIMER3, TIMER4};
 
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 use crate::pac::timer3::{
     RegisterBlock as RegBlock3, EVENTS_COMPARE as EVENTS_COMPARE3, TASKS_CAPTURE as TASKS_CAPTURE3,
 };
@@ -489,7 +490,7 @@ impl Instance for TIMER2 {
     }
 }
 
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 impl Instance for TIMER3 {
     const INTERRUPT: Interrupt = Interrupt::TIMER3;
 
@@ -505,7 +506,7 @@ impl Instance for TIMER3 {
     }
 }
 
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 impl Instance for TIMER4 {
     const INTERRUPT: Interrupt = Interrupt::TIMER4;
 
@@ -522,7 +523,7 @@ impl Instance for TIMER4 {
 }
 
 /// Adds task- and event PPI endpoint getters for CC[4] and CC[5] on supported instances.
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 pub trait ExtendedCCTimer {
     fn task_capture_cc4(&self) -> &TASKS_CAPTURE3;
     fn task_capture_cc5(&self) -> &TASKS_CAPTURE3;
@@ -530,7 +531,7 @@ pub trait ExtendedCCTimer {
     fn event_compare_cc5(&self) -> &EVENTS_COMPARE3;
 }
 
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 impl ExtendedCCTimer for Timer<TIMER3> {
     /// Returns reference to the CC[4] `CAPTURE` task endpoint for PPI.
     #[inline(always)]
@@ -557,7 +558,7 @@ impl ExtendedCCTimer for Timer<TIMER3> {
     }
 }
 
-#[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
+#[cfg(not(any(feature = "52810", feature = "52811")))]
 impl ExtendedCCTimer for Timer<TIMER4> {
     /// Returns reference to the CC[4] `CAPTURE` task endpoint for PPI.
     #[inline(always)]

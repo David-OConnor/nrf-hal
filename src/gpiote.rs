@@ -90,7 +90,7 @@ impl<'a> GpioteChannel<'_> {
     pub fn input_pin(&'a self, pin: &'a Pin) -> GpioteChannelEvent<'a> {
         GpioteChannelEvent {
             gpiote: &self.gpiote,
-            pin: pin,
+            pin,
             channel: self.channel,
         }
     }
@@ -98,7 +98,7 @@ impl<'a> GpioteChannel<'_> {
     pub fn output_pin(&'a self, pin: Pin) -> GpioteTask<'a> {
         GpioteTask {
             gpiote: &self.gpiote,
-            pin: pin,
+            pin,
             channel: self.channel,
             task_out_polarity: TaskOutPolarity::Toggle,
         }

@@ -1,15 +1,8 @@
 //! This library provides high-level access to nRF-52 and nRF-53 peripherals. WIP. Uses
 //! a similar API to [STM32-HAL](https://github.com/David-OConnor/stm32-hal);
 //! designed to be interchangeable when able.
-
-//! ## Most features missing!
-//! This is currently intended to use the specific features required by AnyLeaf projects
-//! that use nrf-52. It may be expanded to be more general at some point in the future,
-//! but that's not on the near-term road map. Please use the [nrf-rs](https://github.com/nrf-rs) libraries instead.
-
-//! Please see the [Readme](https://github.com/David-OConnor/nrf-hal/blob/main/README.md) for a detailed overview,
-//! and the [examples folder on Github](https://github.com/David-OConnor/nrf-hal/tree/main/examples)
-//! for example code and project structure.
+//!
+//! See the Readme on crates.io or Github for more details.
 
 #![no_std]
 

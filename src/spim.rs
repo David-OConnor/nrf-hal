@@ -184,21 +184,24 @@ where
         // todo than P0 and P1 (ie 53)
 
         spim.psel.sck.write(|w| unsafe {
+            #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
             w.port().bit(sck.port as u8 != 0);
             w.pin().bits(sck.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         spim.psel.mosi.write(|w| unsafe {
+            #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
             w.port().bit(mosi.port as u8 != 0);
             w.pin().bits(mosi.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         spim.psel.miso.write(|w| unsafe {
+            #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
             w.port().bit(miso.port as u8 != 0);
             w.pin().bits(miso.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         // Enable SPIM instance.

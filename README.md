@@ -3,7 +3,7 @@
 [![Crate](https://img.shields.io/crates/v/nrf-hal.svg)](https://crates.io/crates/nrf-hal)
 [![Docs](https://docs.rs/nrf-hal/badge.svg)](https://docs.rs/nrf-hal)
 
-This library provides high-level access to nRF-52 and nRF-53 peripherals. WIP. Uses
+This library provides high-level access to nRF-52 and nRF-53 peripherals. Uses
 a similar API to [STM32-HAL](https://github.com/David-OConnor/stm32-hal);
 designed to be interchangeable when able.
 
@@ -13,12 +13,10 @@ their newer counterparts: TWIM[S], SPIM[s], and UARTE.
 
 ## Many features are missing
 This is currently intended to use the specific features required by AnyLeaf projects
-that use nrf-52. It may be expanded to be more general at some point in the future,
+that use nRF-52. It may be expanded to be more general at some point in the future,
 but that's not on the near-term road map. Please use the [nrf-rs](https://github.com/nrf-rs) libraries instead.
 
 ## Currently based on [nrf-rs](https://github.com/nrf-rs/nrf-hal), with much code taken directly from it.
-Uses [Embassy's nrf-softdevice](https://github.com/embassy-rs/nrf-softdevice)
-for Bluetooth functionality.
 
 ## Uses the [ESB library](https://github.com/thalesfragoso/esb) for Nordic ShockBurst wireless communications.
 (Currently unimplemented, but compatible if set up in user code.)
@@ -52,6 +50,7 @@ use nrf_hal::{
     gpio::{Pin, Port, Dir, Drive},
     twim::{Twim, TwimFreq},
     low_power,
+    pac,
     // timer::{Timer, TimerInterrupt},
 };
 

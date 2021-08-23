@@ -36,6 +36,16 @@ pub enum Port {
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
+/// Values for the `DETECTMODE` register
+pub enum DetectMode {
+    /// DETECT directly connected to PIN DETECT signals
+    Default = 0,
+    /// Use the latched LDETECT behavior
+    Ldetect = 1,
+}
+
+#[derive(Copy, Clone)]
+#[repr(u8)]
 /// Pin direction; values for `DIR`
 pub enum Dir {
     Input = 0,
@@ -66,18 +76,6 @@ pub enum Pull {
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
-/// Values for `PIN_CONF` reg, `SENSE` field.
-pub enum Sense {
-    /// Disabled
-    Disabled = 0,
-    /// Sense for high level
-    High = 2,
-    /// Sense for low level
-    Low = 3,
-}
-
-#[derive(Copy, Clone)]
-#[repr(u8)]
 /// Drive configuration. Values for `PIN_CONF` reg, `DRIVE` field.
 pub enum Drive {
     /// Standard '0', standard '1'
@@ -97,6 +95,18 @@ pub enum Drive {
     S0D1 = 6,
     /// High drive '0' disconnect '1' (normally used for wired-or-connections)
     H0D1 = 7,
+}
+
+#[derive(Copy, Clone)]
+#[repr(u8)]
+/// Values for `PIN_CONF` reg, `SENSE` field.
+pub enum Sense {
+    /// Disabled
+    Disabled = 0,
+    /// Sense for high level
+    High = 2,
+    /// Sense for low level
+    Low = 3,
 }
 
 #[derive(Copy, Clone)]
@@ -151,8 +161,6 @@ impl Pin {
         unsafe { &*ptr }
     }
 
-    // todo: COnfirm how you << the pin is correct.
-
     /// Set a pin state (ie set high or low output voltage level). See also `set_high()` and
     /// `set_low()`. Sets the `OUTSET` register. Atomic.
     pub fn set_state(&mut self, value: PinState) {
@@ -188,26 +196,41 @@ impl Pin {
 
     /// Latch register indicating what GPIO pins that have met the criteria set in the PIN_CNF[n].SENSE registers.
     /// Reads from the the `LATCH` register.
-    pub fn is_latched(&mut self, latch: Latch) -> bool {
-        !(self.regs().latch.read().bits() & (1 << self.pin) == 0)
+    pub fn is_latched(&mut self) -> bool {
+        !(self.regs().latch.read().bits() & (1 << self.pin) != 0)
     }
 
-    // /// Select between default DETECT signal behavior and LDETECT mode. Sets the `DETECTMODE` register.
-    // pub fn detect_mode(&mut self, det_mode: DetectMode) {
-
-    // }
+    /// Select between default DETECT signal behavior and LDETECT mode. Sets the `DETECTMODE` register.
+    pub fn detect_mode(&mut self, det_mode: DetectMode) {
+        match det_mode {
+            DetectMode::Default => self
+                .regs()
+                .detectmode
+                .modify(|r, w| unsafe { w.bits(r.bits() | (1 << self.pin)) }),
+            DetectMode::Ldetect => self
+                .regs()
+                .detectmode
+                .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << self.pin)) }),
+        }
+    }
 
     /// Set the pin's output direction. Sets the `DIRSET` or `DIRCLR` register.
     pub fn dir(&mut self, dir: Dir) {
         match dir {
-            Dir::Input => self
-                .regs()
-                .dirclr
-                .write(|w| unsafe { w.bits(1 << self.pin) }),
-            Dir::Output => self
-                .regs()
-                .dirset
-                .write(|w| unsafe { w.bits(1 << self.pin) }),
+            Dir::Input => {
+                self.regs()
+                    .dirclr
+                    .write(|w| unsafe { w.bits(1 << self.pin) });
+
+                self.input_buf(InputBuf::Connect);
+            }
+            Dir::Output => {
+                self.regs()
+                    .dirset
+                    .write(|w| unsafe { w.bits(1 << self.pin) });
+
+                self.input_buf(InputBuf::Disconnect);
+            }
         }
     }
 

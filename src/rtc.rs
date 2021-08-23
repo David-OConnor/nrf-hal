@@ -5,10 +5,10 @@
 use core::ops::Deref;
 
 #[cfg(feature = "9160")]
-use crate::pac::{rtc0_ns as rtc0, Interrupt, NVIC, RTC0_NS as RTC0, RTC1_NS as RTC1};
+use crate::pac::{rtc0_ns as rtc0, Interrupt, RTC0_NS as RTC0, RTC1_NS as RTC1};
 
 #[cfg(not(feature = "9160"))]
-use crate::pac::{rtc0, Interrupt, NVIC, RTC0, RTC1};
+use crate::pac::{rtc0, Interrupt, RTC0, RTC1};
 
 #[cfg(any(feature = "52832", feature = "52833", feature = "52840"))]
 use crate::pac::RTC2;
@@ -67,11 +67,7 @@ where
     }
 
     /// Enable the generation of a hardware interrupt from a given stimulus.
-    ///
-    /// If access to the NVIC is not provided, the interrupt must ALSO be enabled
-    /// there outside of this function (e.g. manually call `nvic.enable`, or through
-    /// the use of RTIC).
-    pub fn enable_interrupt(&mut self, int: RtcInterrupt, nvic: Option<&mut NVIC>) {
+    pub fn enable_interrupt(&mut self, int: RtcInterrupt) {
         match int {
             RtcInterrupt::Tick => self.periph.intenset.write(|w| w.tick().set()),
             RtcInterrupt::Overflow => self.periph.intenset.write(|w| w.ovrflw().set()),
@@ -80,17 +76,10 @@ where
             RtcInterrupt::Compare2 => self.periph.intenset.write(|w| w.compare2().set()),
             RtcInterrupt::Compare3 => self.periph.intenset.write(|w| w.compare3().set()),
         }
-        if let Some(_nvic) = nvic {
-            unsafe { NVIC::unmask(T::INTERRUPT) };
-        }
     }
 
     /// Disable the generation of a hardware interrupt from a given stimulus.
-    ///
-    /// If access to the NVIC is not provided, the interrupt must ALSO be disabled
-    /// there outside of this function (e.g. manually call `nvic.disable`, or through
-    /// the use of RTIC).
-    pub fn disable_interrupt(&mut self, int: RtcInterrupt, nvic: Option<&mut NVIC>) {
+    pub fn disable_interrupt(&mut self, int: RtcInterrupt) {
         match int {
             RtcInterrupt::Tick => self.periph.intenclr.write(|w| w.tick().clear()),
             RtcInterrupt::Overflow => self.periph.intenclr.write(|w| w.ovrflw().clear()),
@@ -98,9 +87,6 @@ where
             RtcInterrupt::Compare1 => self.periph.intenclr.write(|w| w.compare1().clear()),
             RtcInterrupt::Compare2 => self.periph.intenclr.write(|w| w.compare2().clear()),
             RtcInterrupt::Compare3 => self.periph.intenclr.write(|w| w.compare3().clear()),
-        }
-        if let Some(_nvic) = nvic {
-            NVIC::mask(T::INTERRUPT);
         }
     }
 

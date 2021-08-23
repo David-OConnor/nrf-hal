@@ -59,24 +59,40 @@ where
     pub fn new(twim: T, scl: &Pin, sda: &Pin, frequency: TwimFreq) -> Self {
         // Select pins.
 
-        // todo: You may need to feature gate the port setting for variants with more
-        // todo than P0 and P1 (ie 53)
         twim.psel.scl.write(|w| unsafe {
+            #[cfg(not(any(
+                feature = "52810",
+                feature = "52811",
+                feature = "52832",
+                feature = "53"
+            )))]
             w.port().bit(scl.port as u8 != 0);
+            #[cfg(feature = "53")]
+            w.port().bits(scl.port as u8);
             w.pin().bits(scl.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         twim.psel.sda.write(|w| unsafe {
+            #[cfg(not(any(
+                feature = "52810",
+                feature = "52811",
+                feature = "52832",
+                feature = "53"
+            )))]
             w.port().bit(sda.port as u8 != 0);
+            #[cfg(feature = "53")]
+            w.port().bits(sda.port as u8);
             w.pin().bits(sda.pin);
-            w.connect().set_bit()
+            w.connect().clear_bit()
         });
 
         // Enable TWIM instance.
         twim.enable.write(|w| w.enable().enabled());
 
         // Configure frequency.
+        // let frequency = 13738688; // todo temp!!!
+        // twim.frequency.write(|w| unsafe { w.frequency().bits(frequency) });
         twim.frequency.write(|w| w.frequency().variant(frequency));
 
         Twim(twim)
@@ -193,6 +209,7 @@ where
             }
             if self.0.events_error.read().bits() != 0 {
                 self.0.events_error.reset();
+                // Stop TWI transaction. Must be issued while the TWI master is not suspended.
                 self.0.tasks_stop.write(|w| unsafe { w.bits(1) });
             }
         }
@@ -223,6 +240,13 @@ where
 
         // Start write operation.
         self.0.shorts.write(|w| w.lasttx_stop().enabled());
+
+        // RM, section 6.31.2
+        // "A TWI master write sequence is started by triggering the STARTTX task. After the STARTTX task has been
+        // triggered, the TWI master will generate a start condition on the TWI bus, followed by clocking out the
+        // address and the READ/WRITE bit set to 0 (WRITE=0, READ=1)."
+
+        // Start TWI transmit sequence
         self.0.tasks_starttx.write(|w|
             // `1` is a valid value to write to task registers.
             unsafe { w.bits(1) });
