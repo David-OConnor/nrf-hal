@@ -37,7 +37,7 @@ pub mod rtc;
 pub mod spim;
 pub mod timer;
 pub mod twim;
-pub mod uarte;
+// pub mod uarte;  // todo Relies on timer functionality we changed
 
 #[cfg(feature = "usb")]
 pub mod usb;

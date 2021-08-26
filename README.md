@@ -9,7 +9,7 @@ designed to be interchangeable when able.
 
 ## Legacy features are unsupported
 This library does not support the TWI, SPI, and UART peripherals; it only supports
-their newer counterparts: TWIM[S], SPIM[s], and UARTE.
+their newer counterparts: TWIM[S], SPIM[S], and UARTE.
 
 ## Many features are missing
 This is currently intended to use the specific features required by AnyLeaf projects
@@ -43,13 +43,12 @@ to see which MCU and runtime features are available.
 
 ### Example highlights:
 ```rust
-use cortex_m;
+use cortex_m::{self, asm};
 use cortex_m_rt::entry;
 use nrf_hal::{
     clocks::Clocks,
     gpio::{Pin, Port, Dir, Drive},
     twim::{Twim, TwimFreq},
-    low_power,
     pac,
     // timer::{Timer, TimerInterrupt},
 };
@@ -67,16 +66,16 @@ fn main() -> ! {
     // let mut timer = Timer::new_tim3(dp.TIM3, 0.2, &clock_cfg);
     // timer.enable_interrupt(TimerInterrupt::Update);
 
-    let mut scl = Pin::new(Port::P0, 0, Dir::Output);
+    let mut scl = Pin::new(Port::P0, 0, Dir::Input);
     scl.drive(Drive::S0D1);
 
-    let mut sda = Pin::new(Port::P0, 1, Dir::Output);
+    let mut sda = Pin::new(Port::P0, 1, Dir::Input);
     sda.drive(Drive::S0D1);
 
     let twim = Twim::new(dp.TWIM0, &scl, &sda, TwimFreq::K100);
 
     loop {
-        low_power::sleep_now(&mut cp.SCB);
+        asm::wfi();
     }
 }
 ```
