@@ -80,27 +80,6 @@ pub enum TimerShortcut {
     Disabled,
 }
 
-// todo: Consider TimerInterrupt instead of ints. Leaving ints for now since CC may
-// todo be a broader concept than interrupts.s
-
-// #[derive(Copy, Clone)]
-// #[repr(u8)]
-// /// Timer interrupts. Each is a capture compare.
-// pub enum TimerInterrupt {
-//    /// Capture compare 0
-//    Cc0,
-//    // Capture compare 1
-//    Cc1,
-//    // Capture compare 2
-//    Cc2,
-//    // Capture compare 3
-//    Cc3,
-//    // Capture compare 4
-//    CC4,
-//    // Capture compare 5
-//    CC5,
-// }
-
 /// Represents a Timer peripheral.
 pub struct Timer<R> {
     pub regs: R,
@@ -127,7 +106,7 @@ where
         result
     }
 
-    /// Configure the number of bits used by the TIMER
+    /// Configure the number of bits used by the TIMER.
     pub fn bit_mode(&mut self, mode: TimerBitMode) {
         self.regs
             .bitmode
@@ -139,17 +118,20 @@ where
         self.regs.tasks_start.write(|w| unsafe { w.bits(1) });
     }
 
-    /// Stop the timer.
+    /// Stop the timer. Note that you may be able to use the `shortcut` method instead of
+    /// calling this explicitly.
     pub fn stop(&mut self) {
         self.regs.tasks_stop.write(|w| unsafe { w.bits(1) });
     }
 
-    pub fn is_running(&self, cc_num: usize) -> bool {
-        self.regs.events_compare[cc_num].read().bits() == 0
+    /// Check if the timer is running.
+    pub fn is_running(&self, compare_num: usize) -> bool {
+        self.regs.events_compare[compare_num].read().bits() == 0
     }
 
     /// RM, section 6.30: The Counter register can be cleared by triggering the CLEAR task.
-    /// This will explicitly set the internal value to zero.
+    /// This will explicitly set the internal value to zero. Note that you may be able to
+    /// use the `shortcut` method instead of calling this explicitly.
     pub fn clear(&mut self) {
         self.regs.tasks_clear.write(|w| unsafe { w.bits(1) });
     }
@@ -222,7 +204,6 @@ where
     }
 
     /// Disable an interrupt. (Note: This calls the INTENCLR register).
-
     pub fn disable_interrupt(&mut self, compare_num: usize) {
         self.regs.intenclr.write(|w| match compare_num {
             0 => w.compare0().clear(),
@@ -248,12 +229,10 @@ where
         // todo: compare4 and 5 for the other timers??
     }
 
-    /// Clears interrupt associated with this timer for a given compar number.
-    /// If the interrupt is not cleared, it will immediately retrigger after
-    /// the ISR has finished. For example, place this at the top of your timer's
-    /// interrupt handler.
+    /// Set up a shortcut associated with an event. This can allow a timer event to
+    /// automatically stop or clear the timer.
     pub fn shortcut(&mut self, shortcut: TimerShortcut, compare_num: usize) {
-        // todo: bad DRY
+        // todo: DRY
         self.regs.shorts.modify(|_, w| match compare_num {
             0 => match shortcut {
                 TimerShortcut::Stop => {
@@ -363,7 +342,7 @@ where
 
 #[cfg(feature = "embedded-hal")]
 #[cfg_attr(docsrs, doc(cfg(feature = "embedded-hal")))]
-impl<R> timer::Periodic for Timer<R> where R: Deref<Target = RegBlock0> {}
+impl<R> timer::Periodic for Timer<R> {}
 
 #[cfg(feature = "embedded-hal")]
 #[cfg_attr(docsrs, doc(cfg(feature = "embedded-hal")))]
