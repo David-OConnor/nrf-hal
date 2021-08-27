@@ -22,10 +22,10 @@ but that's not on the near-term road map. Please use the [nrf-rs](https://github
 (Currently unimplemented, but compatible if set up in user code.)
 
 ## Getting started
-Review the [syntax overview example](https://github.com/David-OConnor/stm32-hal/tree/main/examples/syntax_overview)
-for example uses of many of this library's features. Copy and paste its whole folder (It's set up
-using [Knurling's app template](https://github.com/knurling-rs/app-template)), or copy parts of `Cargo.toml` 
-and `main.rs` as required.
+The [IR temperature transmitter example](https://github.com/David-OConnor/nrf-hal/tree/main/examples/temperature_transmitter)
+is a complete example of simple production firmware. It uses the TWIM, Timer, RTC, and Radio peripherals,
+using the ESB protocol to periodically transmit temperature. It's suitable for long-running, battery-powered
+use.
 
 When specifying this crate as a dependency in `Cargo.toml`, you need to specify a feature
 representing your MCU. If this is for code that runs on an MCU directly (ie not a library), also
