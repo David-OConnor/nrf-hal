@@ -1,6 +1,8 @@
 //! Support for the Timer Peripheral.
 //! See nRF52840 Product Specification, section 6.30
 
+// todo: PWM, Compare beyond 3, NRF53-only timers, (eg past 0, 1, 2)
+
 use core::ops::Deref;
 
 #[cfg(feature = "9160")]
@@ -91,12 +93,7 @@ where
     R: Deref<Target = RegBlock0>,
 {
     /// Initialize a Timer peripheral. `freq` is in Hz. By default, configures in 32-bit mode.
-    pub fn new(
-        regs: R,
-        mode: TimerMode,
-        freq: f32, // todo: Set a division manually, like you do with SPI.
-        compare_num: usize,
-    ) -> Self {
+    pub fn new(regs: R, mode: TimerMode, freq: f32, compare_num: usize) -> Self {
         regs.mode.write(|w| unsafe { w.bits(mode as u8 as u32) });
         let mut result = Self { regs, mode };
         result.bit_mode(TimerBitMode::B32);
@@ -124,11 +121,6 @@ where
         self.regs.tasks_stop.write(|w| unsafe { w.bits(1) });
     }
 
-    /// Check if the timer is running.
-    pub fn is_running(&self, compare_num: usize) -> bool {
-        self.regs.events_compare[compare_num].read().bits() == 0
-    }
-
     /// RM, section 6.30: The Counter register can be cleared by triggering the CLEAR task.
     /// This will explicitly set the internal value to zero. Note that you may be able to
     /// use the `shortcut` method instead of calling this explicitly.
@@ -138,7 +130,7 @@ where
 
     /// Set the timer frequency, in Hz. Overrides the period or frequency set
     /// in the constructor.
-    pub fn set_freq(&mut self, freq: f32, cc_num: usize) {
+    pub fn set_freq(&mut self, freq: f32, compare_num: usize) {
         // RM: f_TIMER = 16 MHz / 2^PRESCALER
         // Taking CC into account: f_TIMER = 16 MHz / (2^PRESCALER * cc)
 
@@ -163,10 +155,10 @@ where
         let prescaler = 1; // todo temp hardset.
 
         // 16Mhz / timer = 2*psc * cc
-        let cc = (16_000_000 as f32 / (freq * 2_u32.pow(prescaler) as f32)) as u32;
+        let compare_val = (16_000_000 as f32 / (freq * 2_u32.pow(prescaler) as f32)) as u32;
 
         self.set_prescaler(prescaler);
-        self.set_cc(cc_num, cc);
+        self.set_capture_compare(compare_num, compare_val);
     }
 
     /// Directly set the prescaler. Use this as a faster method for changing frequency,
@@ -175,18 +167,10 @@ where
         assert!(prescaler <= 9);
         // PRESCALER on page 464 and BITMODE on page 463 must only be updated when the timer is stopped.
         // If these registers are updated while the timer is started, unpredictable behavior may occur.
-        // let prev_started = self.regs.read().eanbeld(); // todo
-        // if prev_started {
-        //     self.stop();
-        // }
-        // todo: We can't check if it's running??
+        // Ideally, we'd re-renable after, but we have no way of checking if it's running.
         self.stop();
 
         self.regs.prescaler.write(|w| unsafe { w.bits(prescaler) });
-        //
-        // if prev_started {
-        //     self.start();
-        // }
     }
 
     /// Enable the Timer interrupt for a given compar number.
@@ -334,7 +318,7 @@ where
 
     /// Set the Capture/Compare register for a given value. Only the number of bits indicated by
     /// BITMODE will be used by the TIMER. (Our constructor always sets 32 bits).
-    pub fn set_cc(&mut self, compare_num: usize, value: u32) {
+    pub fn set_capture_compare(&mut self, compare_num: usize, value: u32) {
         // assert!(cc_num <= 5);
         self.regs.cc[compare_num].write(|w| unsafe { w.bits(value) });
     }
@@ -354,11 +338,11 @@ where
 
     fn start<F: Into<f32>>(&mut self, freq: F) {
         self.set_freq(freq.into(), 0);
-        self.start();
+        Timer::start(self);
     }
 
     fn wait(&mut self) -> nb::Result<(), Void> {
-        if self.is_running(0) {
+        if self.regs.events_compare[0].read().bits() == 0 {
             // EVENTS_COMPARE has not been triggered yet
             return Err(nb::Error::WouldBlock);
         }

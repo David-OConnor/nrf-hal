@@ -50,7 +50,7 @@ use nrf_hal::{
     gpio::{Pin, Port, Dir, Drive},
     twim::{Twim, TwimFreq},
     pac,
-    // timer::{Timer, TimerInterrupt},
+    timer::{Timer, TimerMode},
 };
 
 #[entry]
@@ -58,13 +58,13 @@ fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().unwrap();
     let mut dp = pac::Peripherals::take().unwrap();
 
-    let clocks = Clocks::new(dp.CLOCK);
+    let _clocks = Clocks::new(dp.CLOCK);
 
     let mut p15 = Pin::new(Port::P0, 15, Dir::Output);
     p15.set_high();
 
-    // let mut timer = Timer::new_tim3(dp.TIM3, 0.2, &clock_cfg);
-    // timer.enable_interrupt(TimerInterrupt::Update);
+    let mut timer = Timer::new(dp.TIMER1, TimerMode::Timer, 1., 0);
+    timer.enable_interrupt(0);
 
     let mut scl = Pin::new(Port::P0, 0, Dir::Input);
     scl.drive(Drive::S0D1);
