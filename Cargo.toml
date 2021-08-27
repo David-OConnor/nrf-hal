@@ -1,6 +1,6 @@
 [package]
 name = "nrf-hal"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["David O'Connor <david.alan.oconnor@gmail.com>"]
 description = "Hardware abstraction layer for the stm32 chips"
 keywords = ["no-std", "nrf", "nrf52", "embedded", "embedded-hal"]

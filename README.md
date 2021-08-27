@@ -38,8 +38,10 @@ nrf-hal = { version = "^0.1.0", features = ["52840", "52840-rt"]}
 
 If you need `embedded-hal` traits, include the `embedded-hal` feature.
 
-You can review [this section of Cargo.toml](https://github.com/David-OConnor/stm32-hal/blob/main/Cargo.toml#L61)
-to see which MCU and runtime features are available.
+The [IR temperature transmitter example](https://github.com/David-OConnor/nrf-hal/tree/main/examples/temperature_transmitter)
+is a complete example of simple production firmware. It uses the TWIM, Timer, RTC, and Radio peripherals,
+using the ESB protocol to periodically transmit temperature. It's suitable for long-running, battery-powered
+use.
 
 ### Example highlights:
 ```rust

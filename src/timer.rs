@@ -17,11 +17,7 @@ use crate::pac::{
 
 #[cfg(not(feature = "9160"))]
 use crate::pac::{
-    timer0::{
-        RegisterBlock as RegBlock0, EVENTS_COMPARE, TASKS_CAPTURE, TASKS_CLEAR, TASKS_COUNT,
-        TASKS_START, TASKS_STOP,
-    },
-    Interrupt, TIMER0, TIMER1, TIMER2,
+    timer0::RegisterBlock as RegBlock0, Interrupt, TIMER0, TIMER1, TIMER2,
 };
 
 #[cfg(not(any(feature = "52810", feature = "52811")))]
@@ -85,7 +81,7 @@ pub enum TimerShortcut {
 /// Represents a Timer peripheral.
 pub struct Timer<R> {
     pub regs: R,
-    mode: TimerMode,
+    // mode: TimerMode,
 }
 
 impl<R> Timer<R>
@@ -95,7 +91,7 @@ where
     /// Initialize a Timer peripheral. `freq` is in Hz. By default, configures in 32-bit mode.
     pub fn new(regs: R, mode: TimerMode, freq: f32, compare_num: usize) -> Self {
         regs.mode.write(|w| unsafe { w.bits(mode as u8 as u32) });
-        let mut result = Self { regs, mode };
+        let mut result = Self { regs };
         result.bit_mode(TimerBitMode::B32);
 
         result.set_freq(freq, compare_num);
