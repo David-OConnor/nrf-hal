@@ -136,11 +136,7 @@ pub struct Pin {
 impl Pin {
     /// Create a new pin, with a specific direction.
     pub fn new(port: Port, pin: u8, dir: Dir) -> Self {
-        let mut result = Self {
-            // pin_port: pin | port as u8,
-            port,
-            pin,
-        };
+        let mut result = Self { port, pin};
 
         result.dir(dir);
         result

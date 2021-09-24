@@ -58,7 +58,6 @@ where
     /// Initialize a TWIM (Two-Wire Interface Master) peripheral.
     pub fn new(twim: T, scl: &Pin, sda: &Pin, frequency: TwimFreq) -> Self {
         // Select pins.
-
         twim.psel.scl.write(|w| unsafe {
             #[cfg(not(any(
                 feature = "52810",
@@ -91,8 +90,6 @@ where
         twim.enable.write(|w| w.enable().enabled());
 
         // Configure frequency.
-        // let frequency = 13738688; // todo temp!!!
-        // twim.frequency.write(|w| unsafe { w.frequency().bits(frequency) });
         twim.frequency.write(|w| w.frequency().variant(frequency));
 
         Twim(twim)
@@ -111,6 +108,11 @@ where
     /// Re-enable the instance after it was previously disabled.
     pub fn enable(&mut self) {
         self.0.enable.write(|w| w.enable().enabled());
+    }
+
+    /// Check if TWIM is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.0.enable.read().bits() == 6
     }
 
     /// Set TX buffer, checking that it is in RAM and has suitable length.

@@ -8,10 +8,7 @@ use core::ops::Deref;
 #[cfg(feature = "9160")]
 use crate::pac::{
     generic::Reg,
-    timer0_ns::{
-        RegisterBlock as RegBlock0, TASKS_CAPTURE, TASKS_CLEAR, TASKS_COUNT, TASKS_START,
-        TASKS_STOP, _EVENTS_COMPARE,
-    },
+    timer0_ns::RegisterBlock as RegBlock0,
     Interrupt, TIMER0_NS as TIMER0, TIMER1_NS as TIMER1, TIMER2_NS as TIMER2,
 };
 
@@ -23,7 +20,7 @@ use crate::pac::{
 #[cfg(not(any(feature = "52810", feature = "52811")))]
 use crate::pac::{TIMER3, TIMER4};
 
-#[cfg(not(any(feature = "52810", feature = "52811")))]
+#[cfg(any(feature = "52832", feature = "52840"))]
 use crate::pac::timer3::{
     RegisterBlock as RegBlock3, EVENTS_COMPARE as EVENTS_COMPARE3, TASKS_CAPTURE as TASKS_CAPTURE3,
 };
@@ -122,6 +119,13 @@ where
     /// use the `shortcut` method instead of calling this explicitly.
     pub fn clear(&mut self) {
         self.regs.tasks_clear.write(|w| unsafe { w.bits(1) });
+    }
+
+    /// Set the timer period, in seconds. Overrides the period or frequency set
+    /// in the constructor.
+    pub fn set_period(&mut self, time: f32, compare_num: usize) {
+        assert!(time > 0.);
+        self.set_freq(1. / time, compare_num);
     }
 
     /// Set the timer frequency, in Hz. Overrides the period or frequency set

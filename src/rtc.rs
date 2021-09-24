@@ -37,8 +37,8 @@ pub enum RtcCompareReg {
 }
 
 impl<T> Rtc<T>
-where
-    T: Instance,
+    where
+        T: Instance,
 {
     /// Creates a new RTC peripheral instance with a 12 bits prescaler.
     /// fRTC = 32_768 / (`prescaler` + 1 )
@@ -149,6 +149,11 @@ where
                 self.periph.events_compare[3].write(|w| unsafe { w.bits(0) });
             }
         };
+    }
+
+    /// Set a timeout for the RTC, in seconds.
+    pub fn set_timeout(&mut self, reg: RtcCompareReg, timeout: f32) -> Result<(), Error> {
+        self.set_compare(reg, (2_768 as f32 * timeout) as u32)
     }
 
     /// Set the compare value of a given register. The compare registers have a width
