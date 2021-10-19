@@ -32,7 +32,6 @@ pub use nrf5340_net_pac as net_pac;
 
 pub mod clocks;
 pub mod gpio;
-pub mod gpiote;
 pub mod rtc;
 pub mod spim;
 pub mod timer;

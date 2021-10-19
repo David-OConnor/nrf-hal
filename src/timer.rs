@@ -7,15 +7,12 @@ use core::ops::Deref;
 
 #[cfg(feature = "9160")]
 use crate::pac::{
-    generic::Reg,
-    timer0_ns::RegisterBlock as RegBlock0,
-    Interrupt, TIMER0_NS as TIMER0, TIMER1_NS as TIMER1, TIMER2_NS as TIMER2,
+    generic::Reg, timer0_ns::RegisterBlock as RegBlock0, Interrupt, TIMER0_NS as TIMER0,
+    TIMER1_NS as TIMER1, TIMER2_NS as TIMER2,
 };
 
 #[cfg(not(feature = "9160"))]
-use crate::pac::{
-    timer0::RegisterBlock as RegBlock0, Interrupt, TIMER0, TIMER1, TIMER2,
-};
+use crate::pac::{timer0::RegisterBlock as RegBlock0, Interrupt, TIMER0, TIMER1, TIMER2};
 
 #[cfg(not(any(feature = "52810", feature = "52811")))]
 use crate::pac::{TIMER3, TIMER4};

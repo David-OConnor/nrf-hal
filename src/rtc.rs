@@ -4,6 +4,8 @@
 
 use core::ops::Deref;
 
+use crate::clocks::LFCLK_FREQ;
+
 #[cfg(feature = "9160")]
 use crate::pac::{rtc0_ns as rtc0, Interrupt, RTC0_NS as RTC0, RTC1_NS as RTC1};
 
@@ -29,7 +31,7 @@ pub enum RtcInterrupt {
 }
 
 /// Compare registers available on the RTCn.
-pub enum RtcCompareReg {
+pub enum RtcCompare {
     Compare0,
     Compare1,
     Compare2,
@@ -37,8 +39,8 @@ pub enum RtcCompareReg {
 }
 
 impl<T> Rtc<T>
-    where
-        T: Instance,
+where
+    T: Instance,
 {
     /// Creates a new RTC peripheral instance with a 12 bits prescaler.
     /// fRTC = 32_768 / (`prescaler` + 1 )
@@ -152,22 +154,22 @@ impl<T> Rtc<T>
     }
 
     /// Set a timeout for the RTC, in seconds.
-    pub fn set_timeout(&mut self, reg: RtcCompareReg, timeout: f32) -> Result<(), Error> {
-        self.set_compare(reg, (2_768 as f32 * timeout) as u32)
+    pub fn set_timeout(&mut self, reg: RtcCompare, timeout: f32) -> Result<(), Error> {
+        self.set_compare(reg, (LFCLK_FREQ as f32 * timeout) as u32)
     }
 
     /// Set the compare value of a given register. The compare registers have a width
     /// of 24 bits.
-    pub fn set_compare(&mut self, reg: RtcCompareReg, val: u32) -> Result<(), Error> {
+    pub fn set_compare(&mut self, reg: RtcCompare, val: u32) -> Result<(), Error> {
         if val >= (1 << 24) {
             return Err(Error::CompareOutOfRange);
         }
 
         let reg = match reg {
-            RtcCompareReg::Compare0 => 0,
-            RtcCompareReg::Compare1 => 1,
-            RtcCompareReg::Compare2 => 2,
-            RtcCompareReg::Compare3 => 3,
+            RtcCompare::Compare0 => 0,
+            RtcCompare::Compare1 => 1,
+            RtcCompare::Compare2 => 2,
+            RtcCompare::Compare3 => 3,
         };
 
         unsafe {

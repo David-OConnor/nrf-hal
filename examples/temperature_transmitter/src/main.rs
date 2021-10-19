@@ -166,11 +166,7 @@ fn main() -> ! {
     // todo: High-level API in `nrf-hal` to make setting this more intuitive, and explicit re
     // todo timeout period.
     let mut rtc = Rtc::new(dp.RTC0, 0).unwrap();
-    rtc.set_compare(
-        RtcCompareReg::Compare0,
-        (LFCLK_FREQ as f32 * SLEEP_TIME_ACTIVE) as u32,
-    )
-    .unwrap();
+    rtc.set_timeout(RtcCompareReg::Compare0, SLEEP_TIME_ACTIVE).unwrap();
     rtc.enable_event(RtcInterrupt::Compare0);
     rtc.enable_interrupt(RtcInterrupt::Compare0);
     rtc.enable_counter();

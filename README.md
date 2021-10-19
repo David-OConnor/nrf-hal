@@ -57,7 +57,6 @@ use nrf_hal::{
 
 #[entry]
 fn main() -> ! {
-    let mut cp = cortex_m::Peripherals::take().unwrap();
     let mut dp = pac::Peripherals::take().unwrap();
 
     let _clocks = Clocks::new(dp.CLOCK);

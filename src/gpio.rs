@@ -1,5 +1,8 @@
 //! This module provides functionality for General Purpose Input and Output (GPIO) pins,
-//! including all GPIO register functions.
+//! including all GPIO register functions. It also includes GPIO tasks and events (GPIOTE)
+//! functionality.
+
+// todo: Add more GPIOTE functionality, eg task mode and port interrupts.
 
 #[cfg(any(feature = "9160", feature = "53"))]
 use crate::pac::{p0_ns as gpio, P0_NS as P0};
@@ -18,6 +21,62 @@ use embedded_hal::digital::v2::{InputPin, OutputPin, ToggleableOutputPin};
 
 #[cfg(feature = "embedded-hal")]
 use core::convert::Infallible;
+
+use crate::pac::GPIOTE;
+
+/// Represents a GPIOTE channel.
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum GpioteChannel {
+    C0 = 0,
+    C1 = 1,
+    C2 = 2,
+    C3 = 3,
+    C4 = 4,
+    C5 = 5,
+    C6 = 6,
+    C7 = 7,
+}
+
+/// The pulse edge used to trigger interrupts. (Polarity). Sets `GPIOTE_CONFIG`
+/// register, `POLARITY` field. When In task mode: Operation to be performed on output
+/// when OUT[n] task is triggered. When In event mode.Operation on input that shall trigger IN[n] event.
+#[derive(Copy, Clone, Debug)]
+#[repr(u8)]
+pub enum Edge {
+    /// Task mode: No effect on pin from OUT[n] task. Event mode:
+    /// no IN[n] event generated on pin activity.
+    None = 0,
+    /// "LoToHi". Task mode: Set pin from OUT[n] task. Event mode: Generate
+    /// IN[n] event when rising edge on pin.
+    Rising = 1,
+    /// "HiToLo". Task mode: Clear pin from OUT[n] task. Event mode:
+    /// Generate IN[n] event when falling edge on pin.
+    Falling = 2,
+    /// Task mode: Toggle pin from OUT[n]. Event mode: Generate
+    /// IN[n] when any change on pin.
+    Toggle = 3,
+}
+
+/// GPIOTE mode of operation for a specific pin. Sets `GPIOTE_CONFIG[n]` register.
+#[derive(Copy, Clone, Debug)]
+#[repr(u8)]
+pub enum GpioteMode {
+    /// Disabled. Pin specified by PSEL will not be acquired by the
+    /// GPIOTE module.
+    Disabled = 0,
+    /// The pin specified by PSEL will be configured as an input and
+    /// the IN[n] event will be generated if operation specified in
+    /// POLARITY occurs on the pin.
+    Event = 1,
+    /// The GPIO specified by PSEL will be configured as an output
+    /// and triggering the SET[n], CLR[n] or OUT[n] task will
+    /// perform the operation specified by POLARITY on the pin.
+    /// When enabled as a task the GPIOTE module will acquire the
+    /// pin and the pin can no longer be written as a regular output
+    /// pin from the GPIO module.
+    Task = 3,
+}
 
 /// A GPIO port with up to 32 pins.
 #[derive(Clone, Copy)]
@@ -136,7 +195,7 @@ pub struct Pin {
 impl Pin {
     /// Create a new pin, with a specific direction.
     pub fn new(port: Port, pin: u8, dir: Dir) -> Self {
-        let mut result = Self { port, pin};
+        let mut result = Self { port, pin };
 
         result.dir(dir);
         result
@@ -254,6 +313,31 @@ impl Pin {
     pub fn sense(&mut self, sense: Sense) {
         self.regs().pin_cnf[self.pin as usize].modify(|_, w| unsafe { w.sense().bits(sense as u8) })
     }
+
+    /// Enable a GPIO pin interrupt. Sets `GPIOTE_INTENSET` register.
+    pub fn enable_interrupt(&mut self, edge: Edge, channel: GpioteChannel) {
+        let gpiote_regs = unsafe { &*GPIOTE::ptr() };
+
+        gpiote_regs.config[channel as usize].modify(|_, w| unsafe {
+            w.mode().bits(GpioteMode::Event as u8);
+            w.psel().bits(self.pin);
+            w.port().bit(self.port as u8 != 0);
+            w.polarity().bits(edge as u8)
+        });
+
+        gpiote_regs
+            .intenset
+            .write(|w| unsafe { w.bits(1 << channel as usize) })
+    }
+
+    /// Disable a GPIO pin interrupt. Sets `GPIOTE_INTENSET` register.
+    pub fn disable_interrupt(&mut self, channel: GpioteChannel) {
+        let gpiote_regs = unsafe { &*GPIOTE::ptr() };
+
+        gpiote_regs
+            .intenclr
+            .write(|w| unsafe { w.bits(1 << channel as usize) })
+    }
 }
 
 #[cfg(feature = "embedded-hal")]
@@ -299,4 +383,17 @@ impl ToggleableOutputPin for Pin {
         }
         Ok(())
     }
+}
+
+/// Check if an event was generatred from the pin specified in `GPIOTE_CONFIG[n].PSTEL`.
+/// Reads from `GPIOTE_EVENTS_IN[channel]` register.
+pub fn event_triggered(channel: GpioteChannel) -> bool {
+    let gpiote_regs = unsafe { &*GPIOTE::ptr() };
+    gpiote_regs.events_in[channel as usize].read().bits() != 0
+}
+
+/// Resets GPIOTE channel interrupt. Sets `GPIOTE_EVENTS_IN[channel]` register.
+pub fn clear_interrupt(channel: GpioteChannel) {
+    let gpiote_regs = unsafe { &*GPIOTE::ptr() };
+    gpiote_regs.events_in[channel as usize].write(|w| unsafe { w.bits(0) });
 }
