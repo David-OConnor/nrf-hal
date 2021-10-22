@@ -166,3 +166,14 @@ pub mod prelude {
     pub use make_globals;
     pub use make_simple_globals;
 }
+
+// use core::sync::{AtomicU8, Ordering};
+
+// /// Add a mock atomic enum.
+// #[macro_export]
+// macro_rules! make_globals {
+//     ($ATOMIC_NAME:ident, $type:ty) => {
+//
+//
+//     };
+// }

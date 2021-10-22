@@ -172,8 +172,8 @@ where
     pub fn new(
         spim: T,
         sck: &Pin,
-        mosi: &Pin,
-        miso: &Pin,
+        mosi: Option<&Pin>,
+        miso: Option<&Pin>,
         frequency: SpimFreq,
         mode: SpiMode,
         orc: u8,
@@ -190,19 +190,23 @@ where
             w.connect().clear_bit()
         });
 
-        spim.psel.mosi.write(|w| unsafe {
-            #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
-            w.port().bit(mosi.port as u8 != 0);
-            w.pin().bits(mosi.pin);
-            w.connect().clear_bit()
-        });
+        if let Some(m) = mosi {
+            spim.psel.mosi.write(|w| unsafe {
+                #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
+                    w.port().bit(m.port as u8 != 0);
+                w.pin().bits(m.pin);
+                w.connect().clear_bit()
+            });
+        }
 
-        spim.psel.miso.write(|w| unsafe {
-            #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
-            w.port().bit(miso.port as u8 != 0);
-            w.pin().bits(miso.pin);
-            w.connect().clear_bit()
-        });
+        if let Some(m) = miso {
+            spim.psel.miso.write(|w| unsafe {
+                #[cfg(not(any(feature = "52810", feature = "52811", feature = "52832")))]
+                    w.port().bit(m.port as u8 != 0);
+                w.pin().bits(m.pin);
+                w.connect().clear_bit()
+            });
+        }
 
         // Enable SPIM instance.
         spim.enable.write(|w| w.enable().enabled());
@@ -424,6 +428,9 @@ where
         res
     }
 
+    // todo: Write is the native write method from nrf-hal.
+    // todo write2 is teh EH-implemented one, which appears quite different. We've ported it to native.
+
     /// Write to an SPI slave.
     ///
     /// This method uses the provided chip select pin to initiate the
@@ -432,11 +439,6 @@ where
     pub fn write(&mut self, chip_select: &mut Pin, tx_buffer: &[u8]) -> Result<(), Error> {
         slice_in_ram_or(tx_buffer, Error::DMABufferNotInDataMemory)?;
         self.transfer_split_uneven(chip_select, tx_buffer, &mut [0u8; 0])
-    }
-
-    /// Return the raw interface to the underlying SPIM peripheral.
-    pub fn free(self) -> T {
-        self.0
     }
 }
 
