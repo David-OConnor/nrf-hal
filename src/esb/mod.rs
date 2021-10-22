@@ -7,6 +7,14 @@
 //!
 //! todo: Release as standalone crate that uses the PAC directly
 
+use cortex_m::peripheral::NVIC;
+
+use crate::pac::{
+    Interrupt,
+};
+
+use cfg_if::cfg_if;
+
 /**
  * Copyright (c) 2016 - 2021, Nordic Semiconductor ASA
  *
@@ -47,8 +55,6 @@
  *
  */
 
-use cfg_if::cfg_if;
-
 
 const BIT_MASK_UINT_8(x) (0xFF >> (8 - (x)))
 
@@ -69,18 +75,14 @@ const     NRF_ESB_PID_MAX         : u8 =            3    ;      /**< Maximum val
 const     NRF_ESB_CRC_RESET_VALUE   : u8 =          0xFFFF ;     /**< CRC reset value. */
 
 // Internal Enhanced ShockBurst module state.
-typedef enum {
+enum nrf_esb_mainstate_t {
     NRF_ESB_STATE_IDLE,                                     /**< Module idle. */
     NRF_ESB_STATE_PTX_TX,                                   /**< Module transmitting without acknowledgment. */
     NRF_ESB_STATE_PTX_TX_ACK,                               /**< Module transmitting with acknowledgment. */
     NRF_ESB_STATE_PTX_RX_ACK,                               /**< Module transmitting with acknowledgment and reception of payload with the acknowledgment response. */
     NRF_ESB_STATE_PRX,                                      /**< Module receiving packets without acknowledgment. */
     NRF_ESB_STATE_PRX_SEND_ACK,                             /**< Module transmitting acknowledgment in RX mode. */
-} nrf_esb_mainstate_t;
-
-
-const DISABLE_RF_IRQ()      NVIC_DisableIRQ(RADIO_IRQn)
-const ENABLE_RF_IRQ()       NVIC_EnableIRQ(RADIO_IRQn)
+}
 
 const _RADIO_SHORTS_COMMON ( RADIO_SHORTS_READY_START_Msk | RADIO_SHORTS_END_DISABLE_Msk | \
             RADIO_SHORTS_ADDRESS_RSSISTART_Msk | RADIO_SHORTS_DISABLED_RSSISTOP_Msk )
@@ -110,29 +112,29 @@ struct pipe_info_t
 /* @brief Structure used by the PRX to organize ACK payloads for multiple pipes. */
 struct nrf_esb_payload_random_access_buf_wrapper_t
 {
-    nrf_esb_payload_t * p_payload.                        /**< Pointer to the ACK payload. */
-             in_use: bool,                           /**< Value used to determine if the current payload pointer is used. */
-    struct nrf_esb_payload_random_access_buf_wrapper_t * p_next. /**< Pointer to the next ACK payload queued on the same pipe. */
+    p_payload: &nrf_esb_payload_t,                     /**< Pointer to the ACK payload. */
+     in_use: bool,                           /**< Value used to determine if the current payload pointer is used. */
+    struct nrf_esb_payload_random_access_buf_wrapper_t * p_next, /**< Pointer to the next ACK payload queued on the same pipe. */
 }
 
 
 /* @brief  First-in, first-out queue of payloads to be transmitted. */
 struct nrf_esb_payload_tx_fifo_t
 {
-    nrf_esb_payload_t * p_payload[NRF_ESB_TX_FIFO_SIZE],  /**< Pointer to the actual queue. */
-          entry_point: u32,                      /**< Current start of queue. */
-          exit_point: u32,                       /**< Current end of queue. */
-  count: u32,                            /**< Current number of elements in the queue. */
+    p_payload: [nrf_esb_payload_t; NRF_ESB_TX_FIFO_SIZE],  /**< Pointer to the actual queue. */
+    entry_point: u32,                      /**< Current start of queue. */
+    exit_point: u32,                       /**< Current end of queue. */
+    count: u32,                            /**< Current number of elements in the queue. */
 }
 
 
 /* @brief First-in, first-out queue of received payloads. */
 struct nrf_esb_payload_rx_fifo_t
 {
-    nrf_esb_payload_t * p_payload[NRF_ESB_RX_FIFO_SIZE].  /**< Pointer to the actual queue. */
-          entry_point: u32                     /**< Current start of queue. */
-         exit_point: u32                      /**< Current end of queue. */
-           count: u32                          /**< Current number of elements in the queue. */
+    p_payload: [ nrf_esb_payload_t; NRF_ESB_RX_FIFO_SIZE],  /**< Pointer to the actual queue. */
+    entry_point: u32   ,                  /**< Current start of queue. */
+    exit_point: u32   ,                   /**< Current end of queue. */
+    count: u32    ,                      /**< Current number of elements in the queue. */
 }
 
 
@@ -142,78 +144,80 @@ struct nrf_esb_payload_rx_fifo_t
  *          that is unique for each pipe. See @ref esb_addressing in the ESB user
  *          guide for more information.
 */
-struct
+struct nrf_esb_address_t
 {
-    u8 base_addr_p0[4];        /**< Base address for pipe 0 encoded in big endian. */
-    u8 base_addr_p1[4];        /**< Base address for pipe 1-7 encoded in big endian. */
-    u8 pipe_prefixes[8];       /**< Address prefix for pipe 0 to 7. */
-    u8 num_pipes;              /**< Number of pipes available. */
-    u8 addr_length;            /**< Length of the address including the prefix. */
-    u8 rx_pipes_enabled;       /**< Bitfield for enabled pipes. */
-    u8 rf_channel;             /**< Channel to use (must be between 0 and 100). */
-} nrf_esb_address_t;
+    base_addr_p0: [u8; 4],        /**< Base address for pipe 0 encoded in big endian. */
+    base_addr_p1: [u8; 4],        /**< Base address for pipe 1-7 encoded in big endian. */
+   pipe_prefixes: [u8; 8],       /**< Address prefix for pipe 0 to 7. */
+    num_pipes: u8,              /**< Number of pipes available. */
+    addr_length: u8,            /**< Length of the address including the prefix. */
+    rx_pipes_enabled: u8,       /**< Bitfield for enabled pipes. */
+    rf_channel: u8,             /**< Channel to use (must be between 0 and 100). */
+}
 
 
 // Module state
-static bool                         m_esb_initialized           = false;
-static nrf_esb_mainstate_t m_nrf_esb_mainstate         = NRF_ESB_STATE_IDLE;
-static nrf_esb_payload_t          * mp_current_payload;
+static                        m_esb_initialized: bool           = false;
+static  m_nrf_esb_mainstate: nrf_esb_mainstate_t         = NRF_ESB_STATE_IDLE;
+static         mp_current_payload: nrf_esb_payload_t  ;
 
-static nrf_esb_event_handler_t      m_event_handler;
+static       m_event_handler: nrf_esb_event_handler_t;
 
 // Address parameters
 __ALIGN(4) static nrf_esb_address_t m_esb_addr = NRF_ESB_ADDR_DEFAULT;
 
 // RF parameters
-static nrf_esb_config_t             m_config_local;
+static             m_config_local: nrf_esb_config_t ;
 
 // TX FIFO
-static nrf_esb_payload_t            m_tx_fifo_payload[NRF_ESB_TX_FIFO_SIZE];
-static nrf_esb_payload_tx_fifo_t    m_tx_fifo;
+static            m_tx_fifo_payload[NRF_ESB_TX_FIFO_SIZE]: nrf_esb_payload_t ;
+static   m_tx_fifo: nrf_esb_payload_tx_fifo_t  ;
 
 // RX FIFO
-static nrf_esb_payload_t            m_rx_fifo_payload[NRF_ESB_RX_FIFO_SIZE];
-static nrf_esb_payload_rx_fifo_t    m_rx_fifo;
+static            m_rx_fifo_payload[NRF_ESB_RX_FIFO_SIZE]: nrf_esb_payload_t ;
+static   m_rx_fifo: nrf_esb_payload_rx_fifo_t  ;
 
 // Payload buffers
-static                     m_tx_payload_buffer: [u8; NRF_ESB_MAX_PAYLOAD_LENGTH + 2];
-static                     m_rx_payload_buffer: [u8; NRF_ESB_MAX_PAYLOAD_LENGTH + 2];
+static                     m_tx_payload_buffer: [u8; NRF_ESB_MAX_PAYLOAD_LENGTH + 2] = [0; NRF_ESB_MAX_PAYLOAD_LENGTH + 2];
+static                     m_rx_payload_buffer: [u8; NRF_ESB_MAX_PAYLOAD_LENGTH + 2] = [0; NRF_ESB_MAX_PAYLOAD_LENGTH + 2];
+
 
 // Random access buffer variables for better ACK payload handling
-nrf_esb_payload_random_access_buf_wrapper_t m_ack_pl_container[NRF_ESB_TX_FIFO_SIZE];
+nrf_esb_payload_random_access_buf_wrapper_t m_ack_pl_container: [NRF_ESB_TX_FIFO_SIZE];
 nrf_esb_payload_random_access_buf_wrapper_t * m_ack_pl_container_entry_point_pr_pipe[NRF_ESB_PIPE_COUNT];
+
 
 // Run time variables
 static            m_interrupt_flags: u32 = 0;
-static                    m_pids: [u8; NRF_ESB_PIPE_COUNT];
-static                   m_rx_pipe_info: [pipe_info_t; NRF_ESB_PIPE_COUNT];
-static           m_retransmits_remaining: u32;
-static            m_last_tx_attempts: u32;
-static          m_wait_for_ack_timeout_us: u32;
+static                    m_pids: [u8; NRF_ESB_PIPE_COUNT] = [0; NRF_ESB_PIPE_COUNT];
+static                   m_rx_pipe_info: [pipe_info_t; NRF_ESB_PIPE_COUNT] = [0; NRF_ESB_PIPE_COUNT];
+static           m_retransmits_remaining: u32 = 0;
+static            m_last_tx_attempts: u32 = 0;
+static          m_wait_for_ack_timeout_us: u32 = 0;
 
 static           m_radio_shorts_common: u32 = _RADIO_SHORTS_COMMON;
 
 // These function pointers are changed dynamically, depending on protocol configuration and state.
-fn (*on_radio_disabled)() = 0;
-fn (*on_radio_end)() = 0;
-fn (*update_rf_payload_format)(u32 payload_length) = 0;
+// fn (*on_radio_disabled)() = 0;
+// fn (*on_radio_end)() = 0;
+// fn (*update_rf_payload_format)(u32 payload_length) = 0;
 
 
 // The following functions are assigned to the function pointers above.
-fn on_radio_disabled_tx_noack();
-fn on_radio_disabled_tx();
-fn on_radio_disabled_tx_wait_for_ack();
-fn on_radio_disabled_rx();
-fn on_radio_disabled_rx_ack();
+// fn on_radio_disabled_tx_noack();
+// fn on_radio_disabled_tx();
+// fn on_radio_disabled_tx_wait_for_ack();
+// fn on_radio_disabled_rx();
+// fn on_radio_disabled_rx_ack();
 
 
-const NRF_ESB_ADDR_UPDATE_MASK_BASE0          (1 << 0)    /*< Mask value to signal updating BASE0 radio address. */
-const NRF_ESB_ADDR_UPDATE_MASK_BASE1          (1 << 1)    /*< Mask value to signal updating BASE1 radio address. */
-const NRF_ESB_ADDR_UPDATE_MASK_PREFIX         (1 << 2)    /*< Mask value to signal updating radio prefixes. */
+const NRF_ESB_ADDR_UPDATE_MASK_BASE0: u8 = 1 << 0;    /*< Mask value to signal updating BASE0 radio address. */
+const NRF_ESB_ADDR_UPDATE_MASK_BASE1: u8 = 1 << 1;    /*< Mask value to signal updating BASE1 radio address. */
+const NRF_ESB_ADDR_UPDATE_MASK_PREFIX: u8 = 1 << 2;    /*< Mask value to signal updating radio prefixes. */
 
 
 // Function to do bytewise bit-swap on an unsigned 32-bit value
-static u32 bytewise_bit_swap(u8 const * p_inp)
+fn bytewise_bit_swap(p_inp: *const u8) -> u32
 {
 #if __CORTEX_M == (0x04U)
     u32 inp = (*(u32*)p_inp);
@@ -229,13 +233,13 @@ static u32 bytewise_bit_swap(u8 const * p_inp)
 
 
 // Convert a base address from nRF24L format to nRF5 format
-static u32 addr_conv(u8 const* p_addr)
+fn addr_conv(p_addr: *const u8) -> u32
 {
     return __REV(bytewise_bit_swap(p_addr)); //lint -esym(628, __rev) -esym(526, __rev) */
 }
 
-#ifdef NRF52832_XXAA
-static ret_code_t apply_address_workarounds()
+#[cfg(feature = "52832")]
+fn  apply_address_workarounds() -> ret_code_t
 {
     if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200) //Check if the device is an nRF52832 Rev. 1.
     {
@@ -280,31 +284,32 @@ static ret_code_t apply_address_workarounds()
     }
     return NRF_SUCCESS;
 }
-#endif
 
 
-fn update_rf_payload_format_esb_dpl(u32 payload_length)
+
+fn update_rf_payload_format_esb_dpl(payload_length: u32)
 {
-#if (NRF_ESB_MAX_PAYLOAD_LENGTH <= 32)
-    // Using 6 bits for length
-    NRF_RADIO.PCNF0 = (0 << RADIO_PCNF0_S0LEN_Pos) |
-                       (6 << RADIO_PCNF0_LFLEN_Pos) |
-                       (3 << RADIO_PCNF0_S1LEN_Pos) ;
-#else
-    // Using 8 bits for length
-    NRF_RADIO.PCNF0 = (0 << RADIO_PCNF0_S0LEN_Pos) |
-                       (8 << RADIO_PCNF0_LFLEN_Pos) |
-                       (3 << RADIO_PCNF0_S1LEN_Pos) ;
-#endif
+    if (NRF_ESB_MAX_PAYLOAD_LENGTH <= 32) {
+        // Using 6 bits for length
+        NRF_RADIO.PCNF0 = (0 << RADIO_PCNF0_S0LEN_Pos) |
+            (6 << RADIO_PCNF0_LFLEN_Pos) |
+            (3 << RADIO_PCNF0_S1LEN_Pos);
+    } else {
+        // Using 8 bits for length
+        NRF_RADIO.PCNF0 = (0 << RADIO_PCNF0_S0LEN_Pos) |
+            (8 << RADIO_PCNF0_LFLEN_Pos) |
+            (3 << RADIO_PCNF0_S1LEN_Pos);
+    }
+
     NRF_RADIO.PCNF1 = (RADIO_PCNF1_WHITEEN_Disabled    << RADIO_PCNF1_WHITEEN_Pos) |
-                       (RADIO_PCNF1_ENDIAN_Big          << RADIO_PCNF1_ENDIAN_Pos)  |
-                       ((m_esb_addr.addr_length - 1)    << RADIO_PCNF1_BALEN_Pos)   |
-                       (0                               << RADIO_PCNF1_STATLEN_Pos) |
-                       (NRF_ESB_MAX_PAYLOAD_LENGTH      << RADIO_PCNF1_MAXLEN_Pos);
+        (RADIO_PCNF1_ENDIAN_Big          << RADIO_PCNF1_ENDIAN_Pos)  |
+        ((m_esb_addr.addr_length - 1)    << RADIO_PCNF1_BALEN_Pos)   |
+        (0                               << RADIO_PCNF1_STATLEN_Pos) |
+        (NRF_ESB_MAX_PAYLOAD_LENGTH      << RADIO_PCNF1_MAXLEN_Pos);
 }
 
 
-fn update_rf_payload_format_esb(u32 payload_length)
+fn update_rf_payload_format_esb(payload_length: u32)
 {
     NRF_RADIO.PCNF0 = (1 << RADIO_PCNF0_S0LEN_Pos) |
                        (0 << RADIO_PCNF0_LFLEN_Pos) |
@@ -318,19 +323,19 @@ fn update_rf_payload_format_esb(u32 payload_length)
 }
 
 
-fn update_radio_addresses(u8 update_mask)
+fn update_radio_addresses(update_mask: u8)
 {
-    if ((update_mask & NRF_ESB_ADDR_UPDATE_MASK_BASE0) != 0)
+    if (update_mask & NRF_ESB_ADDR_UPDATE_MASK_BASE0) != 0
     {
         NRF_RADIO.BASE0 = addr_conv(m_esb_addr.base_addr_p0);
     }
 
-    if ((update_mask & NRF_ESB_ADDR_UPDATE_MASK_BASE1) != 0)
+    if (update_mask & NRF_ESB_ADDR_UPDATE_MASK_BASE1) != 0
     {
         NRF_RADIO.BASE1 = addr_conv(m_esb_addr.base_addr_p1);
     }
 
-    if ((update_mask & NRF_ESB_ADDR_UPDATE_MASK_PREFIX) != 0)
+    if (update_mask & NRF_ESB_ADDR_UPDATE_MASK_PREFIX) != 0
     {
         NRF_RADIO.PREFIX0 = bytewise_bit_swap(&m_esb_addr.pipe_prefixes[0]);
         NRF_RADIO.PREFIX1 = bytewise_bit_swap(&m_esb_addr.pipe_prefixes[4]);
@@ -344,36 +349,32 @@ fn update_radio_tx_power()
 }
 
 
-static bool update_radio_bitrate()
+fn update_radio_bitrate() -> bool
 {
     NRF_RADIO.MODE = m_config_local.bitrate << RADIO_MODE_MODE_Pos;
 
-    switch (m_config_local.bitrate)
+    match m_config_local.bitrate
     {
-        case NRF_ESB_BITRATE_2MBPS:
+        NRF_ESB_BITRATE_2MBPS =>
 #ifdef RADIO_MODE_MODE_Ble_2Mbit
-        case NRF_ESB_BITRATE_2MBPS_BLE:
+        NRF_ESB_BITRATE_2MBPS_BLE => 
 #endif
             m_wait_for_ack_timeout_us = RX_WAIT_FOR_ACK_TIMEOUT_US_2MBPS;
-            break;
 
-        case NRF_ESB_BITRATE_1MBPS:
+        NRF_ESB_BITRATE_1MBPS =>
             m_wait_for_ack_timeout_us = RX_WAIT_FOR_ACK_TIMEOUT_US_1MBPS;
-            break;
 
 #ifdef RADIO_MODE_MODE_Nrf_250Kbit
-        case NRF_ESB_BITRATE_250KBPS:
+        NRF_ESB_BITRATE_250KBPS =>
             m_wait_for_ack_timeout_us = RX_WAIT_FOR_ACK_TIMEOUT_US_250KBPS;
-            break;
 #endif
 
-        case NRF_ESB_BITRATE_1MBPS_BLE:
+        NRF_ESB_BITRATE_1MBPS_BLE =>
             m_wait_for_ack_timeout_us = RX_WAIT_FOR_ACK_TIMEOUT_US_1MBPS_BLE;
-            break;
 
-        default:
+       _ =>
             // Should not be reached
-            return false;
+            return false,
     }
 
     // Ensure that we do not attempt retransmitting before ack timeout.
@@ -386,7 +387,7 @@ static bool update_radio_bitrate()
 }
 
 
-static bool update_radio_protocol()
+fn bool update_radio_protocol() -> bool
 {
     switch (m_config_local.protocol)
     {
@@ -406,7 +407,7 @@ static bool update_radio_protocol()
 }
 
 
-fn update_radio_crc() . bool
+fn update_radio_crc() -> bool
 {
     switch(m_config_local.crc)
     {
@@ -433,9 +434,9 @@ fn update_radio_crc() . bool
 }
 
 
-fn update_radio_parameters() . bool
+fn update_radio_parameters() -> bool
 {
-    bool params_valid = true;
+    let mut params_valid = true;
     update_radio_tx_power();
     params_valid &= update_radio_bitrate();
     params_valid &= update_radio_protocol();
@@ -461,23 +462,23 @@ fn initialize_fifos()
 {
     reset_fifos();
 
-    for (int i = 0; i < NRF_ESB_TX_FIFO_SIZE; i++)
+    for i in 0..NRF_ESB_TX_FIFO_SIZE
     {
         m_tx_fifo.p_payload[i] = &m_tx_fifo_payload[i];
     }
 
-    for (int i = 0; i < NRF_ESB_RX_FIFO_SIZE; i++)
+    for i in 0..NRF_ESB_RX_FIFO_SIZE
     {
         m_rx_fifo.p_payload[i] = &m_rx_fifo_payload[i];
     }
 
-    for (int i = 0; i < NRF_ESB_TX_FIFO_SIZE; i++)
+    for i in 0..NRF_ESB_TX_FIFO_SIZE {
     {
         m_ack_pl_container[i].p_payload = &m_tx_fifo_payload[i];
         m_ack_pl_container[i].in_use = false;
         m_ack_pl_container[i].p_next = 0;
     }
-    for (int i = 0; i < NRF_ESB_PIPE_COUNT; i++)
+    for i in 0..NRF_ESB_PIPE_COUNT {
     {
         m_ack_pl_container_entry_point_pr_pipe[i] = 0;
     }
@@ -493,20 +494,20 @@ fn initialize_fifos()
  * @retval  NRF_INVALID_STATE               If the module is not initialized.
  * @retval  NRF_ERROR_BUFFER_EMPTY          If there are no items in the queue to remove.
  */
-fn nrf_esb_skip_tx() . u32
+fn nrf_esb_skip_tx() -> u32
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
     VERIFY_TRUE(m_tx_fifo.count > 0, NRF_ERROR_BUFFER_EMPTY);
 
-    DISABLE_RF_IRQ();
+    unsafe { NVIC::mask(Interrupt::RADIO) }
 
-    m_tx_fifo.count--;
-    if (++m_tx_fifo.exit_point >= NRF_ESB_TX_FIFO_SIZE)
+    m_tx_fifo.count -= 1;
+    if ( m_tx_fifo.exit_point += 1 >= NRF_ESB_TX_FIFO_SIZE)
     {
         m_tx_fifo.exit_point = 0;
     }
 
-    ENABLE_RF_IRQ();
+    unsafe { NVIC::unmask(Interrupt::RADIO) }
 
     return NRF_SUCCESS;
 }
@@ -523,7 +524,7 @@ fn nrf_esb_skip_tx() . u32
  *  @retval true   Operation successful.
  *  @retval false  Operation failed.
  */
-fn rx_fifo_push_rfbuf(u8 pipe, u8 pid) . bool
+fn rx_fifo_push_rfbuf(pipe: u8, pid: u8) -> bool
 {
     if (m_rx_fifo.count < NRF_ESB_RX_FIFO_SIZE)
     {
@@ -553,11 +554,11 @@ fn rx_fifo_push_rfbuf(u8 pipe, u8 pid) . bool
         m_rx_fifo.p_payload[m_rx_fifo.entry_point].rssi  = NRF_RADIO.RSSISAMPLE;
         m_rx_fifo.p_payload[m_rx_fifo.entry_point].pid   = pid;
         m_rx_fifo.p_payload[m_rx_fifo.entry_point].noack = !(m_rx_payload_buffer[1] & 0x01);
-        if (++m_rx_fifo.entry_point >= NRF_ESB_RX_FIFO_SIZE)
+        if ( m_rx_fifo.entry_point += 1 >= NRF_ESB_RX_FIFO_SIZE)
         {
             m_rx_fifo.entry_point = 0;
         }
-        m_rx_fifo.count++;
+        m_rx_fifo.count += 1;
 
         return true;
     }
@@ -593,60 +594,57 @@ fn ppi_init()
 
 fn start_tx_transaction()
 {
-    bool ack;
+    let ack;
 
     m_last_tx_attempts = 1;
     // Prepare the payload
     mp_current_payload = m_tx_fifo.p_payload[m_tx_fifo.exit_point];
 
 
-    switch (m_config_local.protocol)
+    match m_config_local.protocol
     {
-        case NRF_ESB_PROTOCOL_ESB:
+        NRF_ESB_PROTOCOL_ESB => {
             update_rf_payload_format(mp_current_payload.length);
             m_tx_payload_buffer[0] = mp_current_payload.pid;
             m_tx_payload_buffer[1] = 0;
             memcpy(&m_tx_payload_buffer[2], mp_current_payload.data, mp_current_payload.length);
 
-            NRF_RADIO.SHORTS   = m_radio_shorts_common | RADIO_SHORTS_DISABLED_RXEN_Msk;
+            NRF_RADIO.SHORTS = m_radio_shorts_common | RADIO_SHORTS_DISABLED_RXEN_Msk;
             NRF_RADIO.INTENSET = RADIO_INTENSET_DISABLED_Msk | RADIO_INTENSET_READY_Msk;
 
             // Configure the retransmit counter
             m_retransmits_remaining = m_config_local.retransmit_count;
             on_radio_disabled = on_radio_disabled_tx;
             m_nrf_esb_mainstate = NRF_ESB_STATE_PTX_TX_ACK;
-            break;
+        }
 
-        case NRF_ESB_PROTOCOL_ESB_DPL:
+        NRF_ESB_PROTOCOL_ESB_DPL => {
             ack = !mp_current_payload.noack || !m_config_local.selective_auto_ack;
             m_tx_payload_buffer[0] = mp_current_payload.length;
             m_tx_payload_buffer[1] = mp_current_payload.pid << 1;
-            m_tx_payload_buffer[1] |= mp_current_payload.noack ? 0x00 : 0x01;
+            m_tx_payload_buffer[1] |= mp_current_payload.noack?
+            0x00: 0x01;
             memcpy(&m_tx_payload_buffer[2], mp_current_payload.data, mp_current_payload.length);
 
             // Handling ack if noack is set to false or if selective auto ack is turned off
             if (ack)
             {
-                NRF_RADIO.SHORTS   = m_radio_shorts_common | RADIO_SHORTS_DISABLED_RXEN_Msk;
+                NRF_RADIO.SHORTS = m_radio_shorts_common | RADIO_SHORTS_DISABLED_RXEN_Msk;
                 NRF_RADIO.INTENSET = RADIO_INTENSET_DISABLED_Msk | RADIO_INTENSET_READY_Msk;
 
                 // Configure the retransmit counter
                 m_retransmits_remaining = m_config_local.retransmit_count;
                 on_radio_disabled = on_radio_disabled_tx;
                 m_nrf_esb_mainstate = NRF_ESB_STATE_PTX_TX_ACK;
-            }
-            else
-            {
-                NRF_RADIO.SHORTS   = m_radio_shorts_common;
+            } else {
+                NRF_RADIO.SHORTS = m_radio_shorts_common;
                 NRF_RADIO.INTENSET = RADIO_INTENSET_DISABLED_Msk;
-                on_radio_disabled   = on_radio_disabled_tx_noack;
+                on_radio_disabled = on_radio_disabled_tx_noack;
                 m_nrf_esb_mainstate = NRF_ESB_STATE_PTX_TX;
             }
-            break;
+        }
 
-        default:
-            // Should not be reached
-            break;
+        _ => ()
     }
 
     NRF_RADIO.TXADDRESS    = mp_current_payload.pipe;
@@ -655,8 +653,10 @@ fn start_tx_transaction()
     NRF_RADIO.FREQUENCY    = m_esb_addr.rf_channel;
     NRF_RADIO.PACKETPTR    = (u32)m_tx_payload_buffer;
 
-    NVIC_ClearPendingIRQ(RADIO_IRQn);
-    NVIC_EnableIRQ(RADIO_IRQn);
+    unsafe {
+        NVIC::unpend(Interrupt::RADIO);
+        NVIC::unmask(pac::Interrupt::RADIO)
+    }
 
     NRF_RADIO.EVENTS_ADDRESS = 0;
     NRF_RADIO.EVENTS_PAYLOAD = 0;
@@ -670,12 +670,13 @@ fn start_tx_transaction()
 fn on_radio_disabled_tx_noack()
 {
     m_interrupt_flags |= NRF_ESB_INT_TX_SUCCESS_MSK;
-    () nrf_esb_skip_tx();
+    nrf_esb_skip_tx();
 
     if (m_tx_fifo.count == 0)
     {
         m_nrf_esb_mainstate = NRF_ESB_STATE_IDLE;
-        NVIC_SetPendingIRQ(ESB_EVT_IRQ);
+        // NVIC_SetPendingIRQ(ESB_EVT_IRQ);
+        // NVIC::pend(Interrupt::RADIO);
     }
     else
     {
@@ -757,7 +758,7 @@ fn on_radio_disabled_tx_wait_for_ack()
     }
     else
     {
-        if (m_retransmits_remaining-- == 0)
+        if (m_retransmits_remaining -= 1 == 0)
         {
             NRF_ESB_SYS_TIMER.TASKS_SHUTDOWN = 1;
             NRF_PPI.CHENCLR = (1 << NRF_ESB_PPI_TX_START);
@@ -805,9 +806,9 @@ fn clear_events_restart_rx()
 
 fn on_radio_disabled_rx()
 {
-    bool            ack                = false;
-    bool            retransmit_payload = false;
-    bool            send_rx_event      = true;
+    let mut ack            = false;
+    let  mut retransmit_payload  = false;
+   let mut send_rx_event       = true;
     pipe_info_t *   p_pipe_info;
 
     if (NRF_RADIO.CRCSTATUS == 0)
@@ -843,9 +844,9 @@ fn on_radio_disabled_rx()
     {
         NRF_RADIO.SHORTS = m_radio_shorts_common | RADIO_SHORTS_DISABLED_RXEN_Msk;
 
-        switch (m_config_local.protocol)
+        match m_config_local.protocol
         {
-            case NRF_ESB_PROTOCOL_ESB_DPL:
+            NRF_ESB_PROTOCOL_ESB_DPL =>
                 {
                     if (m_tx_fifo.count > 0 && m_ack_pl_container_entry_point_pr_pipe[NRF_RADIO.RXMATCH] != 0)
                     {
@@ -858,7 +859,7 @@ fn on_radio_disabled_rx()
                             u32 pipe = NRF_RADIO.RXMATCH;
                             m_ack_pl_container_entry_point_pr_pipe[pipe].in_use = false;
                             m_ack_pl_container_entry_point_pr_pipe[pipe] = (nrf_esb_payload_random_access_buf_wrapper_t *)m_ack_pl_container_entry_point_pr_pipe[pipe].p_next;
-                            m_tx_fifo.count--;
+                            m_tx_fifo.count -= 1;
                             if (m_tx_fifo.count > 0 && m_ack_pl_container_entry_point_pr_pipe[pipe] != 0)
                             {
                                  mp_current_payload = m_ack_pl_container_entry_point_pr_pipe[pipe].p_payload;
@@ -895,15 +896,13 @@ fn on_radio_disabled_rx()
 
                     m_tx_payload_buffer[1] = m_rx_payload_buffer[1];
                 }
-                break;
 
-            case NRF_ESB_PROTOCOL_ESB:
+            NRF_ESB_PROTOCOL_ESB =>
                 {
                     update_rf_payload_format(0);
                     m_tx_payload_buffer[0] = m_rx_payload_buffer[0];
                     m_tx_payload_buffer[1] = 0;
                 }
-                break;
         }
 
         m_nrf_esb_mainstate = NRF_ESB_STATE_PRX_SEND_ACK;
@@ -949,12 +948,12 @@ fn on_radio_disabled_rx_ack()
  * @retval  NRF_ERROR_NULL                  If the required parameter was NULL.
  * @retval  NRF_INVALID_STATE               If the module is not initialized.
  */
-static u32 nrf_esb_get_clear_interrupts(u32 * p_interrupts)
+fn nrf_esb_get_clear_interrupts(p_interrupts: *u32) -> u32
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
     VERIFY_PARAM_NOT_NULL(p_interrupts);
 
-    DISABLE_RF_IRQ();
+    unsafe { NVIC::mask(pac::Interrupt::RADIO) }
 
     *p_interrupts = m_interrupt_flags;
     m_interrupt_flags = 0;
@@ -1011,9 +1010,9 @@ fn RADIO_IRQHandler()
  * @retval  NRF_ERROR_NULL          If the @p p_config argument was NULL.
  * @retval  NRF_ERROR_BUSY          If the function failed because the radio is busy.
  */
-fn nrf_esb_init(nrf_esb_config_t const * p_config) . u32
+fn nrf_esb_init(p_config: &[nrf_esb_config_t]) -> u32
 {
-    u32 err_code;
+    let err_code;
 
     VERIFY_PARAM_NOT_NULL(p_config);
 
@@ -1058,12 +1057,13 @@ fn nrf_esb_init(nrf_esb_config_t const * p_config) . u32
 
 
 
-
-#[cfg(feature = "52832")]
-if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004500) //Check if the device is an nRF52832 Rev. 2.
-    //Workaround for nRF52832 rev 2 errata 182
-    *(volatile u32 *) 0x4000173C |= (1 << 10);
-
+    #[cfg(feature = "52832")]
+    {
+        if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004500) //Check if the device is an nRF52832 Rev. 2.
+            //Workaround for nRF52832 rev 2 errata 182
+            * (volatile
+        u32 *) 0x4000173C |= (1 << 10);
+    }
 
     return NRF_SUCCESS;
 }
@@ -1076,7 +1076,7 @@ if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004500) //Check if the device is
  * @retval  NRF_SUCCESS             If Enhanced ShockBurst was suspended.
  * @retval  NRF_ERROR_BUSY          If the function failed because the radio is busy.
  */
-fn nrf_esb_suspend() . u32
+fn nrf_esb_suspend() -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
 
@@ -1101,7 +1101,7 @@ fn nrf_esb_suspend() . u32
  *
  * @retval  NRF_SUCCESS             If Enhanced ShockBurst was disabled.
  */
-u32 nrf_esb_disable()
+fn nrf_esb_disable() -> u32
 {
     // Clear PPI
     NRF_PPI.CHENCLR = (1 << NRF_ESB_PPI_TIMER_START) |
@@ -1131,17 +1131,17 @@ u32 nrf_esb_disable()
  * @retval true                     If the module is idle.
  * @retval false                    If the module is busy.
  */
-bool nrf_esb_is_idle()
+fn nrf_esb_is_idle() -> bool
 {
     return m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE;
 }
 
 
-void ESB_EVT_IRQHandler()
+fn ESB_EVT_IRQHandler()
 {
-    ret_code_t      err_code;
-    u32        interrupts;
-    nrf_esb_evt_t   event;
+       let err_code;
+          let interrupts;
+       let event;
 
     event.tx_attempts = m_last_tx_attempts;
 
@@ -1167,9 +1167,9 @@ void ESB_EVT_IRQHandler()
 }
 
 
-static nrf_esb_payload_random_access_buf_wrapper_t *find_free_payload_cont()
+fn find_free_payload_cont() -> *nrf_esb_payload_random_access_buf_wrapper_t
 {
-    for (int i = 0; i < NRF_ESB_TX_FIFO_SIZE; i++)
+    for (let i = 0; i < NRF_ESB_TX_FIFO_SIZE; i += 1)
     {
         if(!m_ack_pl_container[i].in_use) return &m_ack_pl_container[i];
     }
@@ -1191,7 +1191,7 @@ static nrf_esb_payload_random_access_buf_wrapper_t *find_free_payload_cont()
  * @retval  NRF_ERROR_NO_MEM                If the TX FIFO is full.
  * @retval  NRF_ERROR_INVALID_LENGTH        If the payload length was invalid (zero or larger than the allowed maximum).
  */
-u32 nrf_esb_write_payload(nrf_esb_payload_t const * p_payload)
+fn nrf_esb_write_payload(p_payload: &nrf_esb_payload_t) -> u32
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
     VERIFY_PARAM_NOT_NULL(p_payload);
@@ -1208,12 +1208,12 @@ u32 nrf_esb_write_payload(nrf_esb_payload_t const * p_payload)
         m_pids[p_payload.pipe] = (m_pids[p_payload.pipe] + 1) % (NRF_ESB_PID_MAX + 1);
         m_tx_fifo.p_payload[m_tx_fifo.entry_point].pid = m_pids[p_payload.pipe];
 
-        if (++m_tx_fifo.entry_point >= NRF_ESB_TX_FIFO_SIZE)
+        if ((m_tx_fifo.entry_point += 1) >= NRF_ESB_TX_FIFO_SIZE)
         {
             m_tx_fifo.entry_point = 0;
         }
 
-        m_tx_fifo.count++;
+        m_tx_fifo.count += 1;
     }
     else
     {
@@ -1240,7 +1240,7 @@ u32 nrf_esb_write_payload(nrf_esb_payload_t const * p_payload)
                 }
                 list_iterator.p_next = (struct nrf_esb_payload_random_access_buf_wrapper_t *)new_ack_payload;
             }
-            m_tx_fifo.count++;
+            m_tx_fifo.count += 1;
         }
     }
 
@@ -1266,7 +1266,7 @@ u32 nrf_esb_write_payload(nrf_esb_payload_t const * p_payload)
  * @retval  NRF_ERROR_NULL                  If the required parameter was NULL.
  * @retval  NRF_INVALID_STATE               If the module is not initialized.
  */
-u32 nrf_esb_read_rx_payload(nrf_esb_payload_t * p_payload)
+fn nrf_esb_read_rx_payload(p_payload: &nrf_esb_payload_t) -> u32 {
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
     VERIFY_PARAM_NOT_NULL(p_payload);
@@ -1285,12 +1285,12 @@ u32 nrf_esb_read_rx_payload(nrf_esb_payload_t * p_payload)
     p_payload.noack  = m_rx_fifo.p_payload[m_rx_fifo.exit_point].noack;
     memcpy(p_payload.data, m_rx_fifo.p_payload[m_rx_fifo.exit_point].data, p_payload.length);
 
-    if (++m_rx_fifo.exit_point >= NRF_ESB_RX_FIFO_SIZE)
+    if (m_rx_fifo.exit_point += 1 >= NRF_ESB_RX_FIFO_SIZE)
     {
         m_rx_fifo.exit_point = 0;
     }
 
-    m_rx_fifo.count--;
+    m_rx_fifo.count -= 1;
 
     ENABLE_RF_IRQ();
 
@@ -1304,7 +1304,7 @@ u32 nrf_esb_read_rx_payload(nrf_esb_payload_t * p_payload)
  * @retval  NRF_ERROR_BUFFER_EMPTY          If the TX did not start because the FIFO buffer is empty.
  * @retval  NRF_ERROR_BUSY                  If the function failed because the radio is busy.
  */
-u32 nrf_esb_start_tx()
+fn nrf_esb_start_tx() -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
 
@@ -1324,7 +1324,7 @@ u32 nrf_esb_start_tx()
  * @retval  NRF_SUCCESS                     If the transmission was started successfully.
  * @retval  NRF_ERROR_BUSY                  If the function failed because the radio is busy.
  */
-u32 nrf_esb_start_rx()
+fn nrf_esb_start_rx() -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
 
@@ -1358,7 +1358,7 @@ u32 nrf_esb_start_rx()
  * @retval  NRF_SUCCESS                     If data reception was stopped successfully.
  * @retval  NRF_ESB_ERROR_NOT_IN_RX_MODE    If the function failed because the module is not in RX mode.
  */
-fn nrf_esb_stop_rx() . u32
+fn nrf_esb_stop_rx() -> u32
 {
     if (m_nrf_esb_mainstate == NRF_ESB_STATE_PRX ||
         m_nrf_esb_mainstate == NRF_ESB_STATE_PRX_SEND_ACK)
@@ -1385,7 +1385,7 @@ fn nrf_esb_stop_rx() . u32
  * @retval  NRF_SUCCESS                     If pending items in the TX buffer were successfully cleared.
  * @retval  NRF_INVALID_STATE               If the module is not initialized.
  */
-fn nrf_esb_flush_tx() . u32
+fn nrf_esb_flush_tx() -> u32
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
 
@@ -1409,7 +1409,7 @@ fn nrf_esb_flush_tx() . u32
  * @retval  NRF_INVALID_STATE               If the module is not initialized.
  * @retval  NRF_ERROR_BUFFER_EMPTY          If there are no items in the queue to remove.
  */
-fn nrf_esb_pop_tx() . u32
+fn nrf_esb_pop_tx() -> u32
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
     VERIFY_TRUE(m_tx_fifo.count > 0, NRF_ERROR_BUFFER_EMPTY);
@@ -1422,9 +1422,9 @@ fn nrf_esb_pop_tx() . u32
     }
     else
     {
-        m_tx_fifo.entry_point--;
+        m_tx_fifo.entry_point -= 1;
     }
-    m_tx_fifo.count--;
+    m_tx_fifo.count -= 1;
 
     ENABLE_RF_IRQ();
 
@@ -1437,7 +1437,7 @@ fn nrf_esb_pop_tx() . u32
  * @retval  NRF_SUCCESS                     If the pending items in the RX buffer were successfully cleared.
  * @retval  NRF_INVALID_STATE               If the module is not initialized.
  */
-fn nrf_esb_flush_rx() . u32
+fn nrf_esb_flush_rx() -> u32
 {
     VERIFY_TRUE(m_esb_initialized, NRF_ERROR_INVALID_STATE);
 
@@ -1463,50 +1463,52 @@ fn nrf_esb_flush_rx() . u32
  * @retval  NRF_ERROR_INVALID_PARAM          If the address length was invalid.
  * @retval  NRF_ERROR_BUSY                   If the function failed because the radio is busy.
  */
-fn nrf_esb_set_address_length(u8 length) . u32
+fn nrf_esb_set_address_length(length: u8) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_TRUE(length > 2 && length < 6, NRF_ERROR_INVALID_PARAM);
 
-#ifdef NRF52832_XXAA
-    u32 base_address_mask = length == 5 ? 0xFFFF0000 : 0xFF000000;
-    if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
-    {
-        /*
-        Workaround for nRF52832 Rev 1 Errata 107
-        Check if pipe 0 or pipe 1-7 has a 'zero address'.
-        Avoid using access addresses in the following pattern (where X is don't care):
-        ADDRLEN=5
-        BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            let base_address_mask = if length == 5 { 0xFFFF0000 } else { 0xFF000000 };
+            if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
+            {
+                /*
+                Workaround for nRF52832 Rev 1 Errata 107
+                Check if pipe 0 or pipe 1-7 has a 'zero address'.
+                Avoid using access addresses in the following pattern (where X is don't care):
+                ADDRLEN=5
+                BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
 
-        ADDRLEN=4
-        BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
-        */
-        if ((NRF_RADIO.BASE0 & base_address_mask) == 0 && (NRF_RADIO.PREFIX0 & 0x000000FF) == 0)
-        {
-            return NRF_ERROR_INVALID_PARAM;
-        }
-        if ((NRF_RADIO.BASE1 & base_address_mask) == 0 && ((NRF_RADIO.PREFIX0 & 0x0000FF00) == 0 ||(NRF_RADIO.PREFIX0 & 0x00FF0000) == 0 || (NRF_RADIO.PREFIX0 & 0xFF000000) == 0 ||
-           (NRF_RADIO.PREFIX1 & 0xFF000000) == 0 || (NRF_RADIO.PREFIX1 & 0x00FF0000) == 0 ||(NRF_RADIO.PREFIX1 & 0x0000FF00) == 0 || (NRF_RADIO.PREFIX1 & 0x000000FF) == 0))
-        {
-            return NRF_ERROR_INVALID_PARAM;
+                ADDRLEN=4
+                BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
+                */
+                if ((NRF_RADIO.BASE0 & base_address_mask) == 0 && (NRF_RADIO.PREFIX0 & 0x000000FF) == 0)
+                {
+                    return NRF_ERROR_INVALID_PARAM;
+                }
+                if ((NRF_RADIO.BASE1 & base_address_mask) == 0 && ((NRF_RADIO.PREFIX0 & 0x0000FF00) == 0 ||(NRF_RADIO.PREFIX0 & 0x00FF0000) == 0 || (NRF_RADIO.PREFIX0 & 0xFF000000) == 0 ||
+                   (NRF_RADIO.PREFIX1 & 0xFF000000) == 0 || (NRF_RADIO.PREFIX1 & 0x00FF0000) == 0 ||(NRF_RADIO.PREFIX1 & 0x0000FF00) == 0 || (NRF_RADIO.PREFIX1 & 0x000000FF) == 0))
+                {
+                    return NRF_ERROR_INVALID_PARAM;
+                }
+            }
         }
     }
-#endif
 
     m_esb_addr.addr_length = length;
 
@@ -1536,56 +1538,58 @@ fn nrf_esb_set_address_length(u8 length) . u32
  * @retval  NRF_ERROR_INVALID_PARAM         If the function failed because the address given was too close to a zero address.
  * @retval  NRF_ERROR_NULL                  If the required parameter was NULL.
  */
-u32 nrf_esb_set_base_address_0(u8 const * p_addr)
+fn nrf_esb_set_base_address_0(p_addr: *const u8) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_PARAM_NOT_NULL(p_addr);
 
-#ifdef NRF52832_XXAA
-    if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
-    {
-        /*
-        Workaround for nRF52832 Rev 1 Errata 107
-        Check if pipe 0 or pipe 1-7 has a 'zero address'.
-        Avoid using access addresses in the following pattern (where X is don't care):
-        ADDRLEN=5
-        BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
+            {
+                /*
+                Workaround for nRF52832 Rev 1 Errata 107
+                Check if pipe 0 or pipe 1-7 has a 'zero address'.
+                Avoid using access addresses in the following pattern (where X is don't care):
+                ADDRLEN=5
+                BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
 
-        ADDRLEN=4
-        BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
-        */
-        u32 base_address_mask = m_esb_addr.addr_length == 5 ? 0xFFFF0000 : 0xFF000000;
-        if ((addr_conv(p_addr) & base_address_mask) == 0 && (NRF_RADIO.PREFIX0 & 0x000000FF) == 0)
-        {
-            return NRF_ERROR_INVALID_PARAM;
+                ADDRLEN=4
+                BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
+                */
+                u32 base_address_mask = m_esb_addr.addr_length == 5 ? 0xFFFF0000 : 0xFF000000;
+                if ((addr_conv(p_addr) & base_address_mask) == 0 && (NRF_RADIO.PREFIX0 & 0x000000FF) == 0)
+                {
+                    return NRF_ERROR_INVALID_PARAM;
+                }
+            }
         }
     }
-#endif
-
-
 
     memcpy(m_esb_addr.base_addr_p0, p_addr, 4);
 
     update_radio_addresses(NRF_ESB_ADDR_UPDATE_MASK_BASE0);
-#ifdef NRF52832_XXAA
-    return apply_address_workarounds();
-#else
-    return NRF_SUCCESS;
-#endif
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            return apply_address_workarounds();
+        } else {
+            return NRF_SUCCESS;
+        }
+    }
 }
 
 
@@ -1598,59 +1602,66 @@ u32 nrf_esb_set_base_address_0(u8 const * p_addr)
  * @retval  NRF_ERROR_INVALID_PARAM         If the function failed because the address given was too close to a zero address.
  * @retval  NRF_ERROR_NULL                  If the required parameter was NULL.
  */
-u32 nrf_esb_set_base_address_1(u8 const * p_addr)
+fn nrf_esb_set_base_address_1(p_addr: *const u8) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_PARAM_NOT_NULL(p_addr);
 
-#ifdef NRF52832_XXAA
-    if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
-    {
-        /*
-        Workaround for nRF52832 Rev 1 Errata 107
-        Check if pipe 0 or pipe 1-7 has a 'zero address'.
-        Avoid using access addresses in the following pattern (where X is don't care):
-        ADDRLEN=5
-        BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
+            {
+                /*
+                Workaround for nRF52832 Rev 1 Errata 107
+                Check if pipe 0 or pipe 1-7 has a 'zero address'.
+                Avoid using access addresses in the following pattern (where X is don't care):
+                ADDRLEN=5
+                BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
 
-        ADDRLEN=4
-        BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
-        */
-        u32 base_address_mask = m_esb_addr.addr_length == 5 ? 0xFFFF0000 : 0xFF000000;
-        if ((addr_conv(p_addr) & base_address_mask) == 0 &&
-            ((NRF_RADIO.PREFIX0 & 0x0000FF00) == 0 ||(NRF_RADIO.PREFIX0 & 0x00FF0000) == 0 ||
-            (NRF_RADIO.PREFIX0 & 0xFF000000) == 0 || (NRF_RADIO.PREFIX1 & 0xFF000000) == 0 ||
-            (NRF_RADIO.PREFIX1 & 0x00FF0000) == 0 ||(NRF_RADIO.PREFIX1 & 0x0000FF00) == 0 ||
-            (NRF_RADIO.PREFIX1 & 0x000000FF) == 0))
-        {
-            return NRF_ERROR_INVALID_PARAM;
+                ADDRLEN=4
+                BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
+                */
+                let base_address_mask = if m_esb_addr.addr_length == 5 { 0xFFFF0000 } else { 0xFF000000 };
+                if ((addr_conv(p_addr) & base_address_mask) == 0 &&
+                    ((NRF_RADIO.PREFIX0 & 0x0000FF00) == 0 ||(NRF_RADIO.PREFIX0 & 0x00FF0000) == 0 ||
+                    (NRF_RADIO.PREFIX0 & 0xFF000000) == 0 || (NRF_RADIO.PREFIX1 & 0xFF000000) == 0 ||
+                    (NRF_RADIO.PREFIX1 & 0x00FF0000) == 0 ||(NRF_RADIO.PREFIX1 & 0x0000FF00) == 0 ||
+                    (NRF_RADIO.PREFIX1 & 0x000000FF) == 0))
+                {
+                    return NRF_ERROR_INVALID_PARAM;
+                }
+            }
         }
     }
-#endif
+}
+
+
 
     memcpy(m_esb_addr.base_addr_p1, p_addr, 4);
 
     update_radio_addresses(NRF_ESB_ADDR_UPDATE_MASK_BASE1);
 
-#ifdef NRF52832_XXAA
-    return apply_address_workarounds();
-#else
-    return NRF_SUCCESS;
-#endif
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            return apply_address_workarounds();
+        } else {
+            return NRF_SUCCESS;
+        }
+    }
 }
 
 
@@ -1667,7 +1678,7 @@ u32 nrf_esb_set_base_address_1(u8 const * p_addr)
  * @retval  NRF_ERROR_NULL                  If a required parameter was NULL.
  * @retval  NRF_ERROR_INVALID_PARAM         If an invalid number of pipes was given or if the address given was too close to a zero address.
  */
-fn nrf_esb_set_prefixes(u8 const * p_prefixes, u8 num_pipes): u32
+fn nrf_esb_set_prefixes(p_prefixes: &[u8], num_pipes: u8) ->u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_PARAM_NOT_NULL(p_prefixes);
@@ -1708,7 +1719,7 @@ fn nrf_esb_set_prefixes(u8 const * p_prefixes, u8 num_pipes): u32
 
         if ((NRF_RADIO.BASE1 & base_address_mask) == 0)
         {
-            for (u8 i = 1; i < num_pipes; i++)
+            for (u8 i = 1; i < num_pipes; i += 1)
             {
                 if (p_prefixes[i] == 0)
                 {
@@ -1742,66 +1753,68 @@ cfg_if! {
  * @retval  NRF_ERROR_BUSY                      If the function failed because the radio is busy.
  * @retval  NRF_ERROR_INVALID_PARAM             If the given pipe number was invalid or if the address given was too close to a zero address.
  */
-fn nrf_esb_update_prefix(u8 pipe, u8 prefix): u32
+fn nrf_esb_update_prefix(pipe: u8, prefix: u8) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_TRUE(pipe < NRF_ESB_PIPE_COUNT, NRF_ERROR_INVALID_PARAM);
 
-#ifdef NRF52832_XXAA
-    if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
-    {
-        /*
-        Workaround for nRF52832 Rev 1 Errata 107
-        Check if pipe 0 or pipe 1-7 has a 'zero address'.
-        Avoid using access addresses in the following pattern (where X is don't care):
-        ADDRLEN=5
-        BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            if ((NRF_FICR.INFO.VARIANT & 0x0000FF00) == 0x00004200)  //Check if the device is an nRF52832 Rev. 1.
+            {
+                /*
+                Workaround for nRF52832 Rev 1 Errata 107
+                Check if pipe 0 or pipe 1-7 has a 'zero address'.
+                Avoid using access addresses in the following pattern (where X is don't care):
+                ADDRLEN=5
+                BASE0 = 0x0000XXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x0000XXXX, PREFIX1 = 0x00XXXXXX
 
-        ADDRLEN=4
-        BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
-        BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
-        */
-        u32 base_address_mask = m_esb_addr.addr_length == 5 ? 0xFFFF0000 : 0xFF000000;
-        if (pipe == 0)
-        {
-            if ((NRF_RADIO.BASE0 & base_address_mask) == 0 && prefix == 0)
-            {
-                return NRF_ERROR_INVALID_PARAM;
-            }
-        }
-        else
-        {
-            if ((NRF_RADIO.BASE1 & base_address_mask) == 0 && prefix == 0)
-            {
-                return NRF_ERROR_INVALID_PARAM;
+                ADDRLEN=4
+                BASE0 = 0x00XXXXXX, PREFIX0 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX0 = 0x00XXXXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXXXX00
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXXXX00XX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0xXX00XXXX
+                BASE1 = 0x00XXXXXX, PREFIX1 = 0x00XXXXXX
+                */
+                u32 base_address_mask = m_esb_addr.addr_length == 5 ? 0xFFFF0000 : 0xFF000000;
+                if (pipe == 0)
+                {
+                    if ((NRF_RADIO.BASE0 & base_address_mask) == 0 && prefix == 0)
+                    {
+                        return NRF_ERROR_INVALID_PARAM;
+                    }
+                }
+                else
+                {
+                    if ((NRF_RADIO.BASE1 & base_address_mask) == 0 && prefix == 0)
+                    {
+                        return NRF_ERROR_INVALID_PARAM;
+                    }
+                }
             }
         }
     }
-#endif
     m_esb_addr.pipe_prefixes[pipe] = prefix;
 
     update_radio_addresses(NRF_ESB_ADDR_UPDATE_MASK_PREFIX);
 
-cfg_if! {
-    if #[cfg(feature = "52832")] {
-        return apply_address_workarounds();
-    } else {
-        return NRF_SUCCESS;
+    cfg_if! {
+        if #[cfg(feature = "52832")] {
+            return apply_address_workarounds();
+        } else {
+            return NRF_SUCCESS;
+        }
     }
-}
 }
 
 
@@ -1818,7 +1831,7 @@ cfg_if! {
  * @retval  NRF_ERROR_BUSY                  If the function failed because the radio is busy.
  * @retval  NRF_ERROR_INVALID_PARAM         If the function failed because the address given was too close to a zero address.
  */
-fn nrf_esb_enable_pipes(u8 enable_mask) . u32
+fn nrf_esb_enable_pipes(enable_mask: u8) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_TRUE((enable_mask | BIT_MASK_UINT_8(NRF_ESB_PIPE_COUNT)) == BIT_MASK_UINT_8(NRF_ESB_PIPE_COUNT), NRF_ERROR_INVALID_PARAM);
@@ -1847,7 +1860,7 @@ fn nrf_esb_enable_pipes(u8 enable_mask) . u32
  * @retval  NRF_ERROR_BUSY                      If the module was not in idle state.
  * @retval  NRF_ERROR_INVALID_PARAM             If the channel is invalid (larger than 100).
  */
-fn nrf_esb_set_rf_channel(channel: u32) . u32
+fn nrf_esb_set_rf_channel(channel: u32) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_TRUE(channel <= 100, NRF_ERROR_INVALID_PARAM);
@@ -1865,11 +1878,11 @@ fn nrf_esb_set_rf_channel(channel: u32) . u32
  * @retval  NRF_SUCCESS                         If the operation completed successfully.
  * @retval  NRF_ERROR_NULL                      If the required parameter was NULL.
  */
-fn nrf_esb_get_rf_channel(p_channel: *u32) . u32
+fn nrf_esb_get_rf_channel(p_channel: &mut [u32]) -> u32
 {
     VERIFY_PARAM_NOT_NULL(p_channel);
 
-    *p_channel = m_esb_addr.rf_channel;
+    p_channel = m_esb_addr.rf_channel;
 
     return NRF_SUCCESS;
 }
@@ -1882,7 +1895,7 @@ fn nrf_esb_get_rf_channel(p_channel: *u32) . u32
  * @retval  NRF_SUCCESS                         If the operation completed successfully.
  * @retval  NRF_ERROR_BUSY                      If the function failed because the radio is busy.
  */
-fn nrf_esb_set_tx_power(tx_output_power: nrf_esb_tx_power_t) . u32
+fn nrf_esb_set_tx_power(tx_output_power: nrf_esb_tx_power_t) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
 
@@ -1903,7 +1916,7 @@ fn nrf_esb_set_tx_power(tx_output_power: nrf_esb_tx_power_t) . u32
  * @retval  NRF_SUCCESS                         If the operation completed successfully.
  * @retval  NRF_ERROR_BUSY                      If the function failed because the radio is busy.
  */
-fn nrf_esb_set_retransmit_delay(delay: u16) . u32
+fn nrf_esb_set_retransmit_delay(delay: u16) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_TRUE(delay >= m_wait_for_ack_timeout_us + RETRANSMIT_DELAY_US_OFFSET, NRF_ERROR_INVALID_PARAM);
@@ -1920,7 +1933,7 @@ fn nrf_esb_set_retransmit_delay(delay: u16) . u32
  * @retval  NRF_SUCCESS                         If the operation completed successfully.
  * @retval  NRF_ERROR_BUSY                      If the function failed because the radio is busy.
  */
-fn nrf_esb_set_retransmit_count(count: u16) . u32
+fn nrf_esb_set_retransmit_count(count: u16) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
 
@@ -1936,12 +1949,12 @@ fn nrf_esb_set_retransmit_count(count: u16) . u32
  * @retval  NRF_SUCCESS                         If the operation completed successfully.
  * @retval  NRF_ERROR_BUSY                      If the function failed because the radio is busy.
  */
-u32 nrf_esb_set_bitrate(nrf_esb_bitrate_t bitrate)
+fn nrf_esb_set_bitrate(bitrate: nrf_esb_bitrate_t) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
 
     m_config_local.bitrate = bitrate;
-    return update_radio_bitrate() ? NRF_SUCCESS : NRF_ERROR_INVALID_PARAM;
+    return if update_radio_bitrate() { NRF_SUCCESS } else { NRF_ERROR_INVALID_PARAM };
 }
 
 
@@ -1957,7 +1970,7 @@ u32 nrf_esb_set_bitrate(nrf_esb_bitrate_t bitrate)
  * @retval  NRF_SUCCESS                         If the operation completed successfully.
  * @retval  NRF_ERROR_BUSY                      If the function failed because the radio is busy.
  */
-nrf_esb_reuse_pid(pipe: u8) . u32
+fn nrf_esb_reuse_pid(pipe: u8) -> u32
 {
     VERIFY_TRUE(m_nrf_esb_mainstate == NRF_ESB_STATE_IDLE, NRF_ERROR_BUSY);
     VERIFY_TRUE(pipe < NRF_ESB_PIPE_COUNT, NRF_ERROR_INVALID_PARAM);

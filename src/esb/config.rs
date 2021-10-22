@@ -72,8 +72,8 @@ cfg_if! {
 }
 
 if NRF_ESB_DEBUG {
-    pub(crate) const DEBUG_PIN_SET(a)    (NRF_GPIO->OUTSET = (1 < < (a))) //!< Used internally to set debug pins.
-    pub(crate) const DEBUG_PIN_CLR(a)    (NRF_GPIO->OUTCLR = (1 < < (a))) //!< Used internally to clear debug pins.
+    pub(crate) const DEBUG_PIN_SET(a)    (NRF_GPIO.OUTSET = (1 < < (a))) //!< Used internally to set debug pins.
+    pub(crate) const DEBUG_PIN_CLR(a)    (NRF_GPIO.OUTCLR = (1 < < (a))) //!< Used internally to clear debug pins.
 } else {
     pub ( crate ) const DEBUG_PIN_SET(a) //!< Used internally to set debug pins.
     pub( crate ) const DEBUG_PIN_CLR(a) //!< Used internally to clear debug pins.
@@ -100,9 +100,8 @@ pub(crate) const     NRF_ESB_PPI_TIMER_STOP : u8 =               11 ;           
 pub(crate) const     NRF_ESB_PPI_RX_TIMEOUT  : u8 =              12  ;                //!< The PPI channel used for RX time-out.
 pub(crate) const     NRF_ESB_PPI_TX_START  : u8 =                13  ;                //!< The PPI channel used for starting TX.
 
-#ifndef NRF_ESB_PIPE_COUNT
+
 pub(crate) const     NRF_ESB_PIPE_COUNT     : u8 =               8  ;                 //!< The maximum number of pipes allowed in the API, can be used if you need to restrict the number of pipes used. Must be 8 or lower because of architectural limitations.
-#endif
 assert!(NRF_ESB_PIPE_COUNT <= 8);
 
 /**@cond NO_DOXYGEN */
@@ -193,68 +192,69 @@ pub(crate) const NRF_ESB_LEGACY_CONFIG  {.protocol               = NRF_ESB_PROTO
 *
 * @return  Initializer that sets up the pipe, length, and byte array for content of the TX data.
  */
-pub(crate) const NRF_ESB_CREATE_PAYLOAD(_pipe, ...)                                                  \
-        {.pipe = _pipe, .length = NUM_VA_ARGS(__VA_ARGS__), .data = {__VA_ARGS__}};         \
-        assert!(NUM_VA_ARGS(__VA_ARGS__) > 0 && NUM_VA_ARGS(__VA_ARGS__) <= 63)
+// todo macro
+// pub(crate) const NRF_ESB_CREATE_PAYLOAD(_pipe, ...)                                                  \
+//         {.pipe = _pipe, .length = NUM_VA_ARGS(__VA_ARGS__), .data = {__VA_ARGS__}};         \
+//         assert!(NUM_VA_ARGS(__VA_ARGS__) > 0 && NUM_VA_ARGS(__VA_ARGS__) <= 63)
 
 
 /**@brief Enhanced ShockBurst protocols. */
-typedef enum {
+enum nrf_esb_protocol_t {
     NRF_ESB_PROTOCOL_ESB,      /**< Enhanced ShockBurst with fixed payload length.                                            */
     NRF_ESB_PROTOCOL_ESB_DPL   /**< Enhanced ShockBurst with dynamic payload length.                                          */
-} nrf_esb_protocol_t;
+}
 
 
 /**@brief Enhanced ShockBurst modes. */
-typedef enum {
+enum nrf_esb_mode_t {
     NRF_ESB_MODE_PTX,          /**< Primary transmitter mode. */
     NRF_ESB_MODE_PRX           /**< Primary receiver mode.    */
-} nrf_esb_mode_t;
+}
 
 
 /**@brief Enhanced ShockBurst bitrate modes. */
-typedef enum {
+enum nrf_esb_bitrate_t {
     NRF_ESB_BITRATE_2MBPS     = RADIO_MODE_MODE_Nrf_2Mbit,      /**< 2 Mb radio mode.                                                */
     NRF_ESB_BITRATE_1MBPS     = RADIO_MODE_MODE_Nrf_1Mbit,      /**< 1 Mb radio mode.                                                */
-#if defined(RADIO_MODE_MODE_Nrf_250Kbit)
+// #if defined(RADIO_MODE_MODE_Nrf_250Kbit)
     NRF_ESB_BITRATE_250KBPS   = RADIO_MODE_MODE_Nrf_250Kbit,    /**< 250 Kb radio mode.                                              */
-#endif //!( defined(NRF52840_XXAA) || defined(NRF52810_XXAA) || defined(NRF52811_XXAA) )
+// #endif //!( defined(NRF52840_XXAA) || defined(NRF52810_XXAA) || defined(NRF52811_XXAA) )
     NRF_ESB_BITRATE_1MBPS_BLE = RADIO_MODE_MODE_Ble_1Mbit,      /**< 1 Mb radio mode using @e Bluetooth low energy radio parameters. */
-#if defined(RADIO_MODE_MODE_Ble_2Mbit)
+// #if defined(RADIO_MODE_MODE_Ble_2Mbit)
     NRF_ESB_BITRATE_2MBPS_BLE = RADIO_MODE_MODE_Ble_2Mbit       /**< 2 Mb radio mode using @e Bluetooth low energy radio parameters. */
-#endif
-} nrf_esb_bitrate_t;
+// #endif
+}
 
 
 /**@brief Enhanced ShockBurst CRC modes. */
-typedef enum {
+enum nrf_esb_crc_t {
     NRF_ESB_CRC_16BIT = RADIO_CRCCNF_LEN_Two,                   /**< Use two-byte CRC. */
     NRF_ESB_CRC_8BIT  = RADIO_CRCCNF_LEN_One,                   /**< Use one-byte CRC. */
     NRF_ESB_CRC_OFF   = RADIO_CRCCNF_LEN_Disabled               /**< Disable CRC.      */
-} nrf_esb_crc_t;
+}
 
 
 /**@brief Enhanced ShockBurst radio transmission power modes. */
-typedef enum {
-#if defined(RADIO_TXPOWER_TXPOWER_Pos8dBm)
+enum nrf_esb_tx_power_t {
+// #if defined(RADIO_TXPOWER_TXPOWER_Pos8dBm)
     NRF_ESB_TX_POWER_8DBM     = RADIO_TXPOWER_TXPOWER_Pos8dBm,  /**< 8 dBm radio transmit power.   */
-#endif
-#if defined(RADIO_TXPOWER_TXPOWER_Pos7dBm)
+// #endif
+// #if defined(RADIO_TXPOWER_TXPOWER_Pos7dBm)
     NRF_ESB_TX_POWER_7DBM     = RADIO_TXPOWER_TXPOWER_Pos7dBm,  /**< 7 dBm radio transmit power.   */
-#endif
-#if defined(RADIO_TXPOWER_TXPOWER_Pos6dBm)
+// #endif
+// #if defined(RADIO_TXPOWER_TXPOWER_Pos6dBm)
     NRF_ESB_TX_POWER_6DBM     = RADIO_TXPOWER_TXPOWER_Pos6dBm,  /**< 6 dBm radio transmit power.   */
-#endif
-#if defined(RADIO_TXPOWER_TXPOWER_Pos5dBm)
+// #endif
+// #if defined(RADIO_TXPOWER_TXPOWER_Pos5dBm)
     NRF_ESB_TX_POWER_5DBM     = RADIO_TXPOWER_TXPOWER_Pos5dBm,  /**< 5 dBm radio transmit power.   */
-#endif
+// #endif
     NRF_ESB_TX_POWER_4DBM     = RADIO_TXPOWER_TXPOWER_Pos4dBm,  /**< 4 dBm radio transmit power.   */
-#if defined(RADIO_TXPOWER_TXPOWER_Pos3dBm)
+// #if defined(RADIO_TXPOWER_TXPOWER_Pos3dBm)
     NRF_ESB_TX_POWER_3DBM     = RADIO_TXPOWER_TXPOWER_Pos3dBm,  /**< 3 dBm radio transmit power.   */
-#endif
-#if defined(RADIO_TXPOWER_TXPOWER_Pos2dBm)
+// #endif
+// #if defined(RADIO_TXPOWER_TXPOWER_Pos2dBm)
     NRF_ESB_TX_POWER_2DBM     = RADIO_TXPOWER_TXPOWER_Pos2dBm,  /**< 2 dBm radio transmit power.   */
-#endif
+// #endif
     NRF_ESB_TX_POWER_0DBM     = RADIO_TXPOWER_TXPOWER_0dBm,     /**< 0 dBm radio transmit power.   */
     NRF_ESB_TX_POWER_NEG4DBM  = RADIO_TXPOWER_TXPOWER_Neg4dBm,  /**< -4 dBm radio transmit power.  */
     NRF_ESB_TX_POWER_NEG8DBM  = RADIO_TXPOWER_TXPOWER_Neg8dBm,  /**< -8 dBm radio transmit power.  */
@@ -263,7 +263,7 @@ typedef enum {
     NRF_ESB_TX_POWER_NEG20DBM = RADIO_TXPOWER_TXPOWER_Neg20dBm, /**< -20 dBm radio transmit power. */
     NRF_ESB_TX_POWER_NEG30DBM = RADIO_TXPOWER_TXPOWER_Neg30dBm, /**< -30 dBm radio transmit power. */
     NRF_ESB_TX_POWER_NEG40DBM = RADIO_TXPOWER_TXPOWER_Neg40dBm  /**< -40 dBm radio transmit power. */
-} nrf_esb_tx_power_t;
+}
 
 
 /**@brief Enhanced ShockBurst transmission modes. */
@@ -290,12 +290,12 @@ pub(crate) enum nrf_esb_evt_id_t
  */
 pub(crate) struct nrf_esb_payload_t
 {
-    u8 lengthL,                                 //!< Length of the packet (maximum value is @ref NRF_ESB_MAX_PAYLOAD_LENGTH).
-    u8 pipe,                                   //!< Pipe used for this payload.
-    int8_t  rssi,                                   //!< RSSI for the received packet.
-    u8 noack,                                  //!< Flag indicating that this packet will not be acknowledgement. Flag is ignored when selective auto ack is enabled.
-    u8 pid,                                    //!< PID assigned during communication.
-    u8 data[NRF_ESB_MAX_PAYLOAD_LENGTH],       //!< The payload data.
+    lengthL: u8,                                 //!< Length of the packet (maximum value is @ref NRF_ESB_MAX_PAYLOAD_LENGTH).
+    pipe: u8,                                   //!< Pipe used for this payload.
+    rssi: u8,                                   //!< RSSI for the received packet.
+    noack: u8,                                  //!< Flag indicating that this packet will not be acknowledgement. Flag is ignored when selective auto ack is enabled.
+    pid: u8,                                    //!< PID assigned during communication.
+    data: [u8; NRF_ESB_MAX_PAYLOAD_LENGTH],       //!< The payload data.
 } 
 
 
@@ -324,8 +324,8 @@ pub(crate) struct nrf_esb_config_t
 
           tx_output_power: nrf_esb_tx_power_t,        //!< Enhanced ShockBurst radio transmission power mode.
 
-                   retransmit_delay: uint16_t ,       //!< The delay between each retransmission of unacknowledged packets.
-    uint16_t                retransmit_count,       //!< The number of retransmission attempts before transmission fail.
+                   retransmit_delay: u16 ,       //!< The delay between each retransmission of unacknowledged packets.
+              retransmit_count: u16,       //!< The number of retransmission attempts before transmission fail.
 
     // Control settings
            tx_mode: nrf_esb_tx_mode_t,                //!< Enhanced ShockBurst transmission mode.
@@ -335,7 +335,7 @@ pub(crate) struct nrf_esb_config_t
                payload_length: u8,         //!< Length of the payload (maximum length depends on the platforms that are used on each side).
 
                     selective_auto_ack: bool,     //!< Enable or disable selective auto acknowledgement. When this feature is disabled, all packets will be acknowledged ignoring the noack field.
-} ;
+}
 
 
 // Code below is similar to `nrf_esb_error_codes.h`.
