@@ -1,18 +1,17 @@
 //! This module listens for requests over Bluetooth, and upon reception, wakes the device from a lower power
 //! mode, takes a reading, and transmits it over Bluetooth.
 
-// todo: Once working, make this an stm32-hal example.
-
 #![no_main]
 #![no_std]
 
 use core::{
     cell::{Cell, RefCell},
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
 };
 
 use cortex_m::{
     asm,
+    delay::Delay,
     interrupt::{free, Mutex},
     peripheral::NVIC,
 };
@@ -24,25 +23,25 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use nrf_hal::{
-    // bluetooth::Bluetooth,
-    clocks::{Clocks, LFCLK_FREQ},
+    clocks::Clocks,
     gpio::{Dir, Drive, Pin, Port, Pull},
     pac::{self, interrupt, RTC0, TIMER0, TIMER1, TIMER2, TWIM0},
     prelude::*,
-    rtc::{Rtc, RtcCompareReg, RtcInterrupt},
+    rtc::{Rtc, RtcCompare, RtcInterrupt},
     timer::{Timer, TimerMode, TimerShortcut},
     twim::{Twim, TwimFreq},
 };
 
 use esb::{
     consts::*, irq::StatePTX, Addresses, BBBuffer, ConfigBuilder, ConstBBBuffer, Error, EsbApp,
-    EsbBuffer, EsbHeader, EsbIrq, IrqTimer,
+    EsbBuffer, EsbHeader, EsbIrq, IrqTimer, TxPower,
 };
 
 mod sensor;
 
 // Global state variables, accessible in interrupts.
 make_globals!(
+    (DELAY, Delay),
     (SDA, Pin),
     (SCL, Pin),
     (RTC, Rtc<RTC0>),
@@ -61,8 +60,11 @@ static SENSOR_SLEEPING: AtomicBool = AtomicBool::new(false);
 // use this variable to keep track.
 static COOL_THRESH_TIMER_RUNNING: AtomicBool = AtomicBool::new(false);
 
-// todo: Consider changing SRT to sleep_thresh or something. And change comments
-// todo and how it's used etc.
+static RF_PID: AtomicU8 = AtomicU8::new(0);
+
+// todo from thalesfrago: "keep the esb_irq on the radio interrupt and the esb_app somewhere else"
+
+// todo: 2021-10-18: First time it tries to wake up, it reads -273. Next time it works.
 
 // In °C. If temp is above this, enable the display and show it. Make sure it's low enough
 // to let users know they won't get burned if the display's off.
@@ -74,47 +76,48 @@ const SHOW_READING_THRESH: f32 = 26.; // todo: 50.
 // 20s or so should be good.
 const COOL_THRESH_PERIOD: f32 = 10.;
 
-const MAX_PAYLOAD_SIZE: u8 = 64;
+const MAX_PAYLOAD_SIZE: u8 = 16;
 // The first byte we send (status byte) can either be this success byte, or this fault byte. These
 // must match those used by the base firmware.
 const SUCCESS_BYTE: u8 = 20;
 
 // SLEEP_TIME_IDLE can be 60s for battery operations
-const SLEEP_TIME_IDLE: f32 = 45.; // seconds
-                                  // Perhaps the active sleep time can be short, since most of the power is
-                                  // used by the display? Or not. Note that the sensor will not produce
-                                  // reliable readings without a pause between.
+const SLEEP_TIME_IDLE: f32 = 6.; // seconds // todo ~45
+// Perhaps the active sleep time can be short, since most of the power is
+// used by the display? Or not. Note that the sensor will not produce
+// reliable readings without a pause between.
+
+const TEMP_ERROR_FLAG: f32 = 3.; // Value we unwrap an i2c error on reading to.
 
 // The time to sleep between readings while in active mode.
-const SLEEP_TIME_ACTIVE: f32 = 1.; // seconds
+const SLEEP_TIME_ACTIVE: f32 = 2.; // seconds
 
-// todo: Disable TWIM while sleeping!
-// todo: Disable Radio (Take out of Tx and/or Rx mode?) when sleeping!
+// These flags are used in the radio packet to tell the base unit what type of message is being sent.
+// They must match their equiv in the base unit firmware.
+const TEMP_XMIT_FLAG: u8 = 0;
+// const IDLE_XMIT_FLAG: u8 = 1;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u8)]
 pub enum OpMode {
     Active,
     Idle,
-    SurfaceMenu,
+    // SurfaceMenu,
 }
 
 /// Transmit a sensor reading over ESB, with our 5-byte message format.
-fn transmit(reading: f32) {
-    let reading_bytes = reading.to_bits().to_be_bytes();
-    let msg = [
-        SUCCESS_BYTE,
-        reading_bytes[0],
-        reading_bytes[1],
-        reading_bytes[2],
-        reading_bytes[3],
-    ];
+fn transmit(msg: &[u8]) {
+    // todo: Way to do this truly atomically (in one go?)
+    if RF_PID.compare_exchange(3, 0, Ordering::Release, Ordering::Relaxed).is_err() {
+        RF_PID.fetch_add(1, Ordering::Release);
+    }
 
-    // todo: Store this header globally; don't recreate it each time.
-    // todo: We can't use a static var due to the function call.
+    // todo: Combine this load with the above atomic logic.
+    let pid = RF_PID.load(Ordering::Acquire);
+
     let esb_header = EsbHeader::build()
         .max_payload(MAX_PAYLOAD_SIZE)
-        .pid(0)
+        .pid(pid)
         .pipe(0)
         .no_ack(false)
         .check()
@@ -125,13 +128,37 @@ fn transmit(reading: f32) {
     free(|cs| {
         access_global!(ESB_APP, esb_app, cs);
         if let Some(response) = esb_app.read_packet() {
-            // let rssi = response.get_header().rssi();
+
+            if response.len() < 3 {
+                defmt::error!("ERROR RESPONSE LEN");
+                // todo: Handle this, but not with a return!
+                // return; // todo: What causes this?
+            } else {
+                defmt::info!("RESPONSE: {} {} {}", response[0], response[1], response[2]);
+
+                // Change emissivity if requested by the base unit.
+                if response[0] == SUCCESS_BYTE && response[1] == 1 {
+                    let emis = match response[2] {
+                        0 => 0.90,
+                        1 => 0.85,
+                        2 => 0.6,
+                        _ => panic!()
+                    };
+
+                    defmt::info!("SETTING EMIS");
+                    access_global!(TWIM, twim, cs);
+                    access_global!(DELAY, delay, cs);
+                    sensor::set_emissivity(emis, twim, delay).ok();
+                }
+            }
+            // defmt::info!("RESPONSE: {}", response[0]);
+
             response.release();
         }
 
         let mut packet = esb_app.grant_packet(esb_header).unwrap();
         let length = msg.len();
-        &packet[..length].copy_from_slice(&msg);
+        packet[..length].copy_from_slice(&msg);
         packet.commit(length);
         esb_app.start_tx();
     });
@@ -146,14 +173,21 @@ fn main() -> ! {
 
     let clocks = Clocks::new(dp.CLOCK).enable_ext_hfosc();
 
+    // let mut scl = Pin::new(Port::P0, 20, Dir::Output);
+    // let mut sda = Pin::new(Port::P0, 24, Dir::Output);
+    // scl.set_low();
+    // sda.set_low();
+    // defmt::info!("LOOPING");
+    //
+    // loop {}
+
     // To prevent extra power use from the temp sensor, we don't use a hardware PU on
     // SCL, and drive it low when the sensor sleeps. In fact, we use software pull
     // ups on both SCL and SDA. See `sensor::sleep` and `sensor::wake` for more details.
-    let mut scl = Pin::new(Port::P0, 26, Dir::Input);
-    scl.pull(Pull::Up);
-    scl.drive(Drive::S0D1);
+    // This is fine, since we don't need clock stretching.
+    let mut scl = Pin::new(Port::P0, 20, Dir::Input);
 
-    let mut sda = Pin::new(Port::P0, 27, Dir::Input);
+    let mut sda = Pin::new(Port::P0, 24, Dir::Input);
     sda.pull(Pull::Up);
     sda.drive(Drive::S0D1);
 
@@ -162,11 +196,12 @@ fn main() -> ! {
     // Start the low frequency clock, for use with the RTC.
     clocks.start_lfclk();
 
-    // Run RTC for 1 second (1hz == LFCLK_FREQ)
-    // todo: High-level API in `nrf-hal` to make setting this more intuitive, and explicit re
-    // todo timeout period.
+    // We use this blocking delay for setting emissivity.
+    let delay = Delay::new(cp.SYST, 64_000_000);
+
     let mut rtc = Rtc::new(dp.RTC0, 0).unwrap();
-    rtc.set_timeout(RtcCompareReg::Compare0, SLEEP_TIME_ACTIVE).unwrap();
+    rtc.set_timeout(RtcCompare::Compare0, SLEEP_TIME_ACTIVE)
+        .unwrap();
     rtc.enable_event(RtcInterrupt::Compare0);
     rtc.enable_interrupt(RtcInterrupt::Compare0);
     rtc.enable_counter();
@@ -181,8 +216,10 @@ fn main() -> ! {
     let addresses = Addresses::default();
 
     let esb_cfg = ConfigBuilder::default()
-        .maximum_transmit_attempts(0)
+        // .tx_power(TxPower::POS4DBM) // ts. defaults to 0.
+        .maximum_transmit_attempts(3)
         .max_payload_size(MAX_PAYLOAD_SIZE)
+        .wait_for_ack_timeout(300) // TS. defaults to 120us.
         .check()
         .unwrap();
 
@@ -195,19 +232,20 @@ fn main() -> ! {
     // We use 1.01 / BELOW_SRT_LIMIT instead of 1 / to prevent this timer from syncing with the
     // RTC wakeup, and the RTC wakeup triggering before the main loop can turn off the display. (?)
     let mut cool_thresh_timer =
-        Timer::new(dp.TIMER2, TimerMode::Timer, 1.01 / COOL_THRESH_PERIOD, 0);
+        Timer::new(dp.TIMER2, TimerMode::Timer, 1.01 / COOL_THRESH_PERIOD, 2);
 
-    cool_thresh_timer.shortcut(TimerShortcut::StopClear, 0);
-    cool_thresh_timer.enable_interrupt(0);
+    cool_thresh_timer.shortcut(TimerShortcut::StopClear, 2);
+    cool_thresh_timer.enable_interrupt(2);
 
     // We use the sensor_wake timer to sleep the core while the sensor wakes, instead
-    // of a blocking delay. Datasheet says 250ms, which we pad.
-    let mut sensor_wake_timer = Timer::new(dp.TIMER1, TimerMode::Timer, 1. / 0.27, 0);
-
-    sensor_wake_timer.shortcut(TimerShortcut::StopClear, 0);
-    sensor_wake_timer.enable_interrupt(0);
+    // of a blocking delay. Datasheet says 250ms, which we pad. Note that we change the period depending on
+    // how we use this timer in the sensor wake and set_emissivitiy functions.
+    let mut sensor_wake_timer = Timer::new(dp.TIMER1, TimerMode::Timer, 1. / 0.3, 1);
+    sensor_wake_timer.shortcut(TimerShortcut::StopClear, 1);
+    sensor_wake_timer.enable_interrupt(1);
 
     free(|cs| {
+        DELAY.borrow(cs).replace(Some(delay));
         TWIM.borrow(cs).replace(Some(twim));
         // SDA and SCL are global for use in waking the sensor from its sleep mode.
         SDA.borrow(cs).replace(Some(sda));
@@ -232,28 +270,31 @@ fn main() -> ! {
         NVIC::unmask(pac::Interrupt::TIMER1);
         NVIC::unmask(pac::Interrupt::TIMER2);
 
-        // "If you look at the cortex m4 manual, each interrupt has a byte in a 32 bit register5"
-        cp.NVIC.set_priority(pac::Interrupt::RTC0, 32);
-        cp.NVIC.set_priority(pac::Interrupt::RADIO, 3);
-        cp.NVIC.set_priority(pac::Interrupt::TIMER0, 3);
-        cp.NVIC.set_priority(pac::Interrupt::TIMER1, 3);
-        cp.NVIC.set_priority(pac::Interrupt::TIMER2, 3);
+        // It appears interrupt priority is chunked in sets of 32, with low numbers being higher
+        // priority.
+        // Set. High priority for the RF interrupts.
+        cp.NVIC.set_priority(pac::Interrupt::RADIO, 1);
+        cp.NVIC.set_priority(pac::Interrupt::TIMER0, 1);
+        // We have to allow Timer 1 to interrupt the RTC, since we use it for nonblocking
+        // waits from a fn called from the RTC ISR.
+        cp.NVIC.set_priority(pac::Interrupt::TIMER1, 32);
+        cp.NVIC.set_priority(pac::Interrupt::RTC0, 64);
+        cp.NVIC.set_priority(pac::Interrupt::TIMER2, 64);
     }
 
     loop {
-        // todo: Is it wfe we want? Also, NRF_POWER-> SYSTEMOFF = 1?
+        // Note that it's not possible to use the RTC with SYSTEMOFF enabled.
         asm::wfi();
     }
 }
 
 #[interrupt]
 fn RADIO() {
+    // defmt::info!("RADIO ISR");
     free(|cs| {
         access_global!(ESB_IRQ, esb_irq, cs);
         match esb_irq.radio_interrupt() {
-            Err(Error::MaximumAttempts) => {
-                // ATTEMPTS_FLAG.store(true, Ordering::Release);
-            }
+            Err(Error::MaximumAttempts) => {}
             Err(e) => panic!("Found radio error {:?}", e),
             Ok(_) => {}
         }
@@ -271,69 +312,92 @@ fn TIMER0() {
 
 #[interrupt]
 /// ISR for the sensor wake timer, used to sleep the CPU while the sensor is waking up,
-/// in a non-blocking way.
+/// in a non-blocking way. Also used when setting emissivity.
 fn TIMER1() {
     free(|cs| {
         access_global!(SENSOR_WAKE_TIMER, sensor_wake_timer, cs);
-        sensor_wake_timer.clear_interrupt(0);
+        sensor_wake_timer.clear_interrupt(1);
     });
 }
 
 #[interrupt]
 /// ISR for the cool thresh timer. When a temperature reading is below the threshhold, this timer
-/// starts. When it times out, this ISR runs, putting the sensor and MCU in low-power modes.
+/// starts. When it times out, this ISR runs, putting the sensor in a low-power mode, and disables
+/// TWIM and the radio. Code in this ISR enables power-saving functionality for several peripherals.
 fn TIMER2() {
+    // defmt::warn!("Going to sleep.");
     free(|cs| {
         access_global!(COOL_THRESH_TIMER, cool_thresh_timer, cs);
-        cool_thresh_timer.clear_interrupt(0);
+        cool_thresh_timer.clear_interrupt(2);
+
         COOL_THRESH_TIMER_RUNNING.store(false, Ordering::Release);
 
         OP_MODE.borrow(cs).set(OpMode::Idle);
         access_global!(RTC, rtc, cs);
-        rtc.set_compare(
-            RtcCompareReg::Compare0,
-            (LFCLK_FREQ as f32 * SLEEP_TIME_IDLE) as u32,
-        )
-        .unwrap();
+        rtc.set_timeout(RtcCompare::Compare0, SLEEP_TIME_IDLE)
+            .unwrap();
 
-        if SENSOR_SLEEPING.swap(true, Ordering::Relaxed) {
-            access_global!(TWIM, twim, cs);
+        access_global!(TWIM, twim, cs);
+
+        if SENSOR_SLEEPING
+            .compare_exchange(false, true, Ordering::Release, Ordering::Relaxed)
+            .is_ok()
+        {
             access_global!(SCL, scl, cs);
             sensor::sleep(twim, scl);
-        } else {
-            SENSOR_SLEEPING.store(false, Ordering::Relaxed);
+            // defmt::warn!("setting sensor to sleep mode");
         }
+
+        twim.disable();
+
+        // Transmit a message to the base unit, so it knows to turn off the display etc.
+        // transmit(&[SUCCESS_BYTE, IDLE_XMIT_FLAG, 0, 0, 0, 0]); // `transmit` has it's own CS; don't nest.
+
+        // todo: Not sure we need to mask, but troubleshooting.
+        // todo: Mask after a short timer, eg masking immediately appears to block the xmission.
+        // NVIC::mask(pac::Interrupt::RADIO);
+        // NVIC::mask(pac::Interrupt::TIMER0);
+
+
+        // todo: Figure out how to re-enable, then put this back. Or does the ESB
+        // todo lib handle this for you?
+        // unsafe { (*pac::RADIO::ptr()).tasks_disable.write(|w| w.bits(1))}
+        // todo: Set POWER register to 0??
     });
 }
 
 #[interrupt]
 /// Wake the device up, take a reading, and transmit it. Change between active and
-/// idle modes based on if the reading indicates the stove it on and/or hot.
+/// idle modes based on if the reading indicates the stove is on and/or hot. This ISR
+/// contains the bulk of our execution logic.
 fn RTC0() {
-    let mut reading = 0.;
-
     free(|cs| {
         access_global!(RTC, rtc, cs);
         rtc.reset_event(RtcInterrupt::Compare0);
         rtc.clear_counter();
 
         access_global!(TWIM, twim, cs);
-
-        if SENSOR_SLEEPING.load(Ordering::Acquire) {
-            SENSOR_SLEEPING.store(false, Ordering::Release);
-            // todo: Swap etc
-            access_global!(SDA, sda, cs);
-            access_global!(SCL, scl, cs);
-            access_global!(SENSOR_WAKE_TIMER, sensor_wake_timer, cs);
-            sensor::wake(twim, scl, sda, sensor_wake_timer);
+        if !twim.is_enabled() {
+            twim.enable();
         }
+    });
 
-        reading = sensor::read_temp(twim).unwrap_or(3.);
+    if SENSOR_SLEEPING
+        .compare_exchange(true, false, Ordering::Release, Ordering::Relaxed)
+        .is_ok()
+    {
+        sensor::wake();
+    }
+
+    let mut reading = 0.;
+    free(|cs| {
+        access_global!(TWIM, twim, cs);
+        reading = sensor::read_temp(twim).unwrap_or(TEMP_ERROR_FLAG);
     });
 
     // Sometimes after sensor wake, our readings are -273.15. Unknown cause. Note that this is the same
     // reading we get if attempting to take a reading while the sensor is asleep.
-    let temp_valid = (reading - 3.).abs() > 0.01 && (reading - -273.15).abs() > 0.01;
+    let temp_valid = (reading - TEMP_ERROR_FLAG).abs() > 0.01 && (reading - -273.15).abs() > 0.01;
 
     if !temp_valid {
         return;
@@ -346,45 +410,76 @@ fn RTC0() {
         let mode = OP_MODE.borrow(cs).get();
 
         access_global!(COOL_THRESH_TIMER, cool_thresh_timer, cs);
-
         if reading >= SHOW_READING_THRESH {
             cool_thresh_timer.stop();
+            cool_thresh_timer.clear();
+            COOL_THRESH_TIMER_RUNNING.store(false, Ordering::Release);
 
             if let OpMode::Idle = mode {
+
+                // todo: Not sure we need to mask, but troubleshooting.
+                unsafe {
+                    NVIC::unmask(pac::Interrupt::RADIO);
+                    // NVIC::unmask(pac::Interrupt::TIMER0);
+                }
+
                 OP_MODE.borrow(cs).set(OpMode::Active);
                 access_global!(RTC, rtc, cs);
-                rtc.set_compare(
-                    RtcCompareReg::Compare0,
-                    (LFCLK_FREQ as f32 * SLEEP_TIME_ACTIVE) as u32,
-                )
-                .unwrap();
+                rtc.set_timeout(RtcCompare::Compare0, SLEEP_TIME_ACTIVE)
+                    .unwrap();
+            } else {
+
             }
         } else {
             match mode {
                 OpMode::Active => {
+                    // defmt::warn!("Temp below thresh.");
                     // If we were active but are now below the thresh, and haven't already,
                     // start the cool thresh timer.
-                    if !COOL_THRESH_TIMER_RUNNING.load(Ordering::Acquire) {
-                        // todo: Swap etc
-                        COOL_THRESH_TIMER_RUNNING.store(true, Ordering::Release);
+
+                    if COOL_THRESH_TIMER_RUNNING
+                        .compare_exchange(false, true, Ordering::Release, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        // defmt::warn!("STARTING THE SLEEP TIMER");
                         cool_thresh_timer.start();
                     }
                 }
                 OpMode::Idle => {
-                    // We just woke up the sensor, but don't need to go active; go back to sleep,
-                    // and don't show anything on the display.
+                    // defmt::warn!("Stay asleep");
+                    // We just woke up the sensor, but don't need to go active; go back to sleep.
                     access_global!(TWIM, twim, cs);
                     access_global!(SCL, scl, cs);
                     sensor::sleep(twim, scl);
                     SENSOR_SLEEPING.store(true, Ordering::Release);
-                }
-                // We should never enter the RTC from the menu; only Active and Idle should show up.
-                OpMode::SurfaceMenu => {} // todo: Role of SurfaceMenu on this sensor firmware?
+                } // We should never enter the RTC from the menu; only Active and Idle should show up.
+                // OpMode::SurfaceMenu => {} // todo: Role of SurfaceMenu on this sensor firmware?
             }
         }
     });
 
-    transmit(reading); // `transmit` has it's own CS; don't nest.
+    let mut mode = OpMode::Active;
+    free(|cs| {
+       mode = OP_MODE.borrow(cs).get()
+    });
+
+    // Transmit the reading if we're in active mode: Either from already being active, or
+    // just entering active mode.
+    if mode == OpMode::Active {
+        let reading_bytes = reading.to_bits().to_be_bytes();
+        let msg = [
+            SUCCESS_BYTE,
+            TEMP_XMIT_FLAG,
+            reading_bytes[0],
+            reading_bytes[1],
+            reading_bytes[2],
+            reading_bytes[3],
+        ];
+
+        // transmit(msg, *PID); // `transmit` has it's own CS; don't nest.
+        transmit(&msg); // `transmit` has it's own CS; don't nest.
+    }
+
 }
 
 // same panicking *behavior* as `panic-probe` but doesn't print a panic message
