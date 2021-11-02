@@ -103,6 +103,13 @@ pub fn sleep(twim: &mut Twim<TWIM0>, scl: &mut Pin) {
     // Pull-Up resistor connected on SCL line."
     // We have it configured this way.
 
+    unsafe {
+        (*TWIM0::ptr())
+            .psel
+            .scl
+            .modify(|_, w| w.connect().set_bit());
+    }
+
     scl.dir(Dir::Output);
     scl.set_low();
 }
@@ -111,10 +118,6 @@ pub fn sleep(twim: &mut Twim<TWIM0>, scl: &mut Pin) {
 /// "SCL pin high and then PWM/SDA pin low for at least t_(DDQ) > 33ms"
 /// Note: "On-chip IIR filter is skipped for the very first measurement (post-wake)"
 pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
-    // pub fn wake() {
-    // Note that this function uses the PAC directly, since its async delays using timers
-    // preclude normal resource sharing in a CS. (CSs stop the timer ASMs from working properly)
-
     // Set SCL and SDA to output pins so we can set them manually.
     // todo: We probably don't need to set SCL to be an output pin here, since
     // todo it's already set that way during the sleep procedure.
@@ -122,22 +125,8 @@ pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
     // Don't allow RTC interrupts to fire here, eg during our WFI delays. They shouldn't, but
     // just in case.
 
-    scl.dir(Dir::Output);
-    sda.dir(Dir::Output);
-
-    sda.drive(Drive::S0S1);
-    sda.pull(Pull::Disabled);
-    //
-    // (*P0::ptr()).pin_cnf[24].modify(|_, w| {
-    //     // sda.drive(Drive::S0S1);
-    //     w.drive().bits(0);
-    //
-    //     // sda.pull(Pull::Disabled);
-    //     w.pull().bits(0)
-    // });
-
     // Disconnect TWIM from the pins as well, or we won't be able to manually
-    // set the pins.
+    // set them pins.
     unsafe {
         (*TWIM0::ptr())
             .psel
@@ -148,6 +137,12 @@ pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
             .sda
             .modify(|_, w| w.connect().set_bit());
     }
+
+    scl.dir(Dir::Output);
+    sda.dir(Dir::Output);
+
+    sda.drive(Drive::S0S1);
+    sda.pull(Pull::Disabled);
 
     scl.set_high();
     sda.set_low();

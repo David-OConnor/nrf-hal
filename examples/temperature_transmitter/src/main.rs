@@ -190,14 +190,6 @@ mod app {
 
         let clocks = Clocks::new(dp.CLOCK).enable_ext_hfosc();
 
-        // let mut scl = Pin::new(Port::P0, 20, Dir::Output);
-        // let mut sda = Pin::new(Port::P0, 24, Dir::Output);
-        // scl.set_low();
-        // sda.set_low();
-        // defmt::info!("LOOPING");
-        //
-        // loop {}
-
         // To prevent extra power use from the temp sensor, we don't use a hardware PU on
         // SCL, and drive it low when the sensor sleeps. In fact, we use software pull
         // ups on both SCL and SDA. See `sensor::sleep` and `sensor::wake` for more details.
