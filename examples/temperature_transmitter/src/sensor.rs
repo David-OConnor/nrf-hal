@@ -4,8 +4,9 @@
 use cortex_m::{asm::wfi, delay::Delay};
 
 use nrf_hal::{
-    gpio::{Dir, Pin},
+    gpio::{Dir, Drive, Pin, Pull},
     pac::{P0, TIMER1, TWIM0},
+    timer::Timer,
     twim::Twim,
 };
 
@@ -109,8 +110,8 @@ pub fn sleep(twim: &mut Twim<TWIM0>, scl: &mut Pin) {
 /// Wake from sleep mode. See datasheet, section 8.4.8.
 /// "SCL pin high and then PWM/SDA pin low for at least t_(DDQ) > 33ms"
 /// Note: "On-chip IIR filter is skipped for the very first measurement (post-wake)"
-// pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
-pub fn wake() {
+pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
+    // pub fn wake() {
     // Note that this function uses the PAC directly, since its async delays using timers
     // preclude normal resource sharing in a CS. (CSs stop the timer ASMs from working properly)
 
@@ -121,21 +122,19 @@ pub fn wake() {
     // Don't allow RTC interrupts to fire here, eg during our WFI delays. They shouldn't, but
     // just in case.
 
-    unsafe {
-        // scl.dir(Dir::Output);
-        (*P0::ptr()).dirset.write(|w| w.bits(1 << 20));
+    scl.dir(Dir::Output);
+    sda.dir(Dir::Output);
 
-        // sda.dir(Dir::Output);
-        (*P0::ptr()).dirset.write(|w| w.bits(1 << 24));
-
-        (*P0::ptr()).pin_cnf[24].modify(|_, w| {
-            // sda.drive(Drive::S0S1);
-            w.drive().bits(0);
-
-            // sda.pull(Pull::Disabled);
-            w.pull().bits(0)
-        });
-    }
+    sda.drive(Drive::S0S1);
+    sda.pull(Pull::Disabled);
+    //
+    // (*P0::ptr()).pin_cnf[24].modify(|_, w| {
+    //     // sda.drive(Drive::S0S1);
+    //     w.drive().bits(0);
+    //
+    //     // sda.pull(Pull::Disabled);
+    //     w.pull().bits(0)
+    // });
 
     // Disconnect TWIM from the pins as well, or we won't be able to manually
     // set the pins.
@@ -150,50 +149,26 @@ pub fn wake() {
             .modify(|_, w| w.connect().set_bit());
     }
 
-    // scl.set_high();
-    unsafe { (*P0::ptr()).outset.write(|w| w.bits(1 << 20)) }
-    // sda.set_low();
-    unsafe { (*P0::ptr()).outclr.write(|w| w.bits(1 << 24)) }
+    scl.set_high();
+    sda.set_low();
 
-    unsafe {
-        // timer.set_period(0.040, 1); // > 33ms
-        (*TIMER1::ptr()).cc[1].write(|w| w.bits(320_000));
-
-        // timer.start();
-        (*TIMER1::ptr()).tasks_start.write(|w| w.bits(1));
-    }
+    timer.set_period(0.040, 1); // > 33ms
+    timer.start();
 
     wfi();
 
-    // sda.set_high();
-    unsafe { (*P0::ptr()).outset.write(|w| w.bits(1 << 24)) }
+    sda.set_high();
 
     // Reset previous pin settings for TWIM
-    unsafe {
-        // scl.dir(Dir::Input);
-        (*P0::ptr()).dirclr.write(|w| w.bits(1 << 20));
-
-        // sda.dir(Dir::Input);
-        (*P0::ptr()).dirset.write(|w| w.bits(1 << 24));
-
-        (*P0::ptr()).pin_cnf[24].modify(|_, w| {
-            // sda.drive(Drive::S0D1);
-            w.drive().bits(6);
-
-            // sda.pull(Pull::Up);
-            w.pull().bits(3)
-        });
-    }
+    scl.dir(Dir::Input);
+    sda.dir(Dir::Input);
+    sda.drive(Drive::S0D1);
+    sda.pull(Pull::Up);
 
     // Datasheet: After wake up the first data is available after 0.25 seconds (typ).
 
-    unsafe {
-        // timer.set_period(0.3, 1);
-        (*TIMER1::ptr()).cc[1].write(|w| w.bits(2_400_000));
-
-        // timer.start();
-        (*TIMER1::ptr()).tasks_start.write(|w| w.bits(1));
-    }
+    timer.set_period(0.3, 1);
+    timer.start();
 
     wfi();
 

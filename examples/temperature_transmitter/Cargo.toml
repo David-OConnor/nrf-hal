@@ -1,8 +1,8 @@
 [package]
 authors = ["David O'Connor <david.alan.oconnor@gmail.com>"]
 name = "stove_therm_sensor_firmware"
-edition = "2021"
 version = "0.1.0"
+edition = "2021"
 
 [dependencies]
 cortex-m = "0.7.3"
@@ -11,16 +11,15 @@ defmt = "0.2.3"
 defmt-rtt = "0.2.0"
 panic-probe = { version = "0.2.0", features = ["print-defmt"] }
 
+cortex-m-rtic = { version = "0.6.0-alpha.5"}
+
 # Chip: MDBT50Q-P512K module, based on nRF52833
 nrf-hal = { path = "../../../nrf-hal", features = ["52833", "52833-rt"]}
 smbus-pec = "1.0.0"  # Software PEC. Could perhaps replace with hardware.
 num-traits = { version = "0.2.14", default-features = false, features=["libm"] }  # For float rounding and abs.
 
 # Enhanced Shockburst; ie Nordic's proprietary RF protocol. Fast ramp-up enabled.
-#esb = { version = "0.1.0", features = ["52840", "fast-ru"] }
-# Local due to old PAC version used by released/GH one.
-# todo: Use your Github fork if upstream isn't merged instead of path dep.
-esb = { path = "../../../../Desktop/esb", features = ["52833", "fast-ru"] }
+esb = { git = "https://github.com/thalesfragoso/esb", branch = "master", features = ["52833", "fast-ru"] }
 
 [features]
 # set logging levels here
