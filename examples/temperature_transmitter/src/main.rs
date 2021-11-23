@@ -45,14 +45,15 @@ static COOL_THRESH_TIMER_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // In °C. If temp is above this, enable the display and show it. Make sure it's low enough
 // to let users know they won't get burned if the display's off.
-const SHOW_READING_THRESH: f32 = 26.; // todo: 50.
+const TEMP_XMIT_THRESH: f32 = 40.;
 
 // If temp is below `SHOW_READING_THRESH` for this long in seconds, go to idle mode, where we increase
 // the wakeup interval to save power.
 
 // Make sure COOL_THRESH_PERIOD is high enough so that a minor adjustment won't turn the device off.
-// 20s or so should be good.
-const COOL_THRESH_PERIOD: f32 = 10.;
+// 20s or so should be good. If this threshhold is tripped, the user may need to wait for a full idle time
+// to expire before temps show again.
+const COOL_THRESH_PERIOD: f32 = 20.;
 
 const MAX_PAYLOAD_SIZE: u8 = 16;
 // The first byte we send (status byte) can either be this success byte, or this fault byte. These
@@ -60,21 +61,29 @@ const MAX_PAYLOAD_SIZE: u8 = 16;
 const SUCCESS_BYTE: u8 = 20;
 
 // SLEEP_TIME_IDLE can be 60s for battery operations
-const SLEEP_TIME_IDLE: f32 = 6.; // seconds // todo ~45
-                                 // Perhaps the active sleep time can be short, since most of the power is
-                                 // used by the display? Or not. Note that the sensor will not produce
-                                 // reliable readings without a pause between.
+const SLEEP_TIME_IDLE: f32 = 45.; // seconds
+                                  // Perhaps the active sleep time can be short, since most of the power is
+                                  // used by the display? Or not. Note that the sensor will not produce
+                                  // reliable readings without a pause between.
 
 const TEMP_ERROR_FLAG: f32 = 3.; // Value we unwrap an i2c error on reading to.
 
 // The time to sleep between readings while in active mode.
 const SLEEP_TIME_ACTIVE: f32 = 2.; // seconds
 
+// We use RF_CHANNEL to manage pairing between base and sensor unit. Currently hard-set
+// to allow a user to have multiple devices. Write the number somewhere on the front of the circuit
+// boards for each unit.
+// Don't use 1: It appears to be the same as 2. (?)
+const RF_CHANNEL: u8 = 2;
+
 // These flags are used in the radio packet to tell the base unit what type of message is being sent.
 // They must match their equiv in the base unit firmware.
+// todo Don't use 1: It appears to be the same as 2. (?)
 const TEMP_XMIT_FLAG: u8 = 0;
 
 static OP_MODE: AtomicU8 = AtomicU8::new(0);
+static SURFACE_SETTING: AtomicU8 = AtomicU8::new(0);
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -104,7 +113,8 @@ impl OpMode {
     }
 }
 
-/// Transmit a sensor reading over ESB, with our 5-byte message format.
+/// Transmit a sensor reading over ESB, with our 5-byte message format. Listen for a reply
+/// with an updated emissivity to set.
 fn transmit(
     msg: &[u8],
     twim: &mut Twim<TWIM0>,
@@ -129,22 +139,27 @@ fn transmit(
     // todo: The ability to send fault codes etc.
 
     if let Some(response) = esb_app.read_packet() {
-        if response.len() < 3 {
-            defmt::error!("ERROR RESPONSE LEN");
+        if response.len() < 2 {
+            // defmt::error!("ERROR RESPONSE LEN");
         } else {
-            defmt::info!("RESPONSE: {} {} {}", response[0], response[1], response[2]);
+            // defmt::info!("RESPONSE: {} {} {}", response[0], response[1], response[2]);
 
-            // Change emissivity if requested by the base unit.
-            if response[0] == SUCCESS_BYTE && response[1] == 1 {
-                let emis = match response[2] {
-                    0 => 0.90,
-                    1 => 0.85,
-                    2 => 0.6,
-                    _ => panic!(),
-                };
+            // Change emissivity if requested by the base unit. Response[1] == 1 means the emissivity
+            // has changed.
+            if response[0] == SUCCESS_BYTE {
+                // The base unit always transmits emissivity in the response. If not the same as we have set,
+                // synchronize.
+                if SURFACE_SETTING.swap(response[1], Ordering::Release) != response[1] {
+                    let emis = match response[1] {
+                        0 => 0.90,
+                        1 => 0.85,
+                        2 => 0.6,
+                        _ => 0.9, // note: This shouldn't happen.
+                    };
 
-                defmt::info!("SETTING EMIS");
-                sensor::set_emissivity(emis, twim, delay).ok();
+                    // defmt::error!("SETTING EMIS: {}", emis);
+                    sensor::set_emissivity(emis, twim, delay).ok();
+                }
             }
         }
 
@@ -158,7 +173,7 @@ fn transmit(
     esb_app.start_tx();
 }
 
-#[rtic::app(device = pac)]
+#[rtic::app(device = pac, peripherals = false)]
 mod app {
     use super::*;
 
@@ -186,7 +201,7 @@ mod app {
         // Cortex-M peripherals
         let cp = cx.core;
         // Set up microcontroller peripherals
-        let dp = cx.device;
+        let dp = pac::Peripherals::take().unwrap();
 
         let clocks = Clocks::new(dp.CLOCK).enable_ext_hfosc();
 
@@ -194,11 +209,19 @@ mod app {
         // SCL, and drive it low when the sensor sleeps. In fact, we use software pull
         // ups on both SCL and SDA. See `sensor::sleep` and `sensor::wake` for more details.
         // This is fine, since we don't need clock stretching.
+        // let mut scl = Pin::new(Port::P0, 20, Dir::Output);
         let mut scl = Pin::new(Port::P0, 20, Dir::Input);
 
+        // let mut sda = Pin::new(Port::P0, 24, Dir::Output);
         let mut sda = Pin::new(Port::P0, 24, Dir::Input);
         sda.pull(Pull::Up);
         sda.drive(Drive::S0D1);
+
+
+        // todo TS
+        // scl.set_high();
+        // sda.set_high();
+        // loop {}
 
         let twim = Twim::new(dp.TWIM0, &scl, &sda, TwimFreq::K100);
 
@@ -222,7 +245,21 @@ mod app {
             timer_flag: AtomicBool::new(false),
         };
 
-        let addresses = Addresses::default();
+        // todo: Addresses Fields is private - https://github.com/thalesfragoso/esb/issues/22.
+        // Use below once fixed upstream.
+        // let addresses = Addresses {
+        //     rf_channel: RF_CHANNEL,
+        //     ..Default::default();
+        // }
+
+        let addresses = Addresses::new(
+            [0xE7, 0xE7, 0xE7, 0xE7],
+            [0xC2, 0xC2, 0xC2, 0xC2],
+            [0xE7, 0xC2, 0xC3, 0xC4],
+            [0xC5, 0xC6, 0xC7, 0xC8],
+            RF_CHANNEL,
+        )
+        .unwrap();
 
         let esb_cfg = ConfigBuilder::default()
             // .tx_power(TxPower::POS4DBM) // ts. defaults to 0.
@@ -319,8 +356,6 @@ mod app {
         let rtc = cx.shared.rtc;
         let scl = cx.shared.scl;
 
-        defmt::info!("SLEEPING");
-
         (cool_thresh_timer, twim, rtc, scl).lock(|cool_thresh_timer, twim, rtc, scl| {
             cool_thresh_timer.clear_interrupt(2);
 
@@ -370,8 +405,7 @@ mod app {
                 }
 
                 let reading = sensor::read_temp(twim).unwrap_or(TEMP_ERROR_FLAG);
-                // defmt::info!("READING: {}", reading);
-
+                // defmt::println!("READING {}", reading);
                 // Sometimes after sensor wake, our readings are -273.15. Unknown cause. Note that this is the same
                 // reading we get if attempting to take a reading while the sensor is asleep.
                 let temp_valid =
@@ -386,10 +420,14 @@ mod app {
                 // after a timer expires.
                 let mode = OpMode::load(Ordering::Acquire);
 
-                if reading >= SHOW_READING_THRESH {
-                    cool_thresh_timer.stop();
-                    cool_thresh_timer.clear();
-                    COOL_THRESH_TIMER_RUNNING.store(false, Ordering::Release);
+                if reading >= TEMP_XMIT_THRESH {
+                    if COOL_THRESH_TIMER_RUNNING
+                        .compare_exchange(true, false, Ordering::Release, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        cool_thresh_timer.stop();
+                        cool_thresh_timer.clear();
+                    }
 
                     if let OpMode::Idle = mode {
                         OpMode::Active.store(Ordering::Release);
@@ -412,7 +450,6 @@ mod app {
                         OpMode::Idle => {
                             // We just woke up the sensor, but don't need to go active; go back to sleep.
                             sensor::sleep(twim, scl);
-
                             SENSOR_SLEEPING.store(true, Ordering::Release);
                         } // We should never enter the RTC from the menu; only Active and Idle should show up.
                     }
@@ -421,7 +458,7 @@ mod app {
                 let mode = OpMode::load(Ordering::Acquire);
 
                 // Transmit the reading if we're in active mode: Either from already being active, or
-                // just entering active mode.
+                // just entering active mode. This includes showing readings below the thresh.
                 if mode == OpMode::Active {
                     let reading_bytes = reading.to_bits().to_be_bytes();
                     let msg = [
@@ -446,14 +483,6 @@ mod app {
 fn panic() -> ! {
     cortex_m::asm::udf()
 }
-
-static COUNT: AtomicUsize = AtomicUsize::new(0);
-defmt::timestamp!("{=usize}", {
-    // NOTE(no-CAS) `timestamps` runs with interrupts disabled
-    let n = COUNT.load(Ordering::Relaxed);
-    COUNT.store(n + 1, Ordering::Relaxed);
-    n
-});
 
 /// Terminates the application and makes `probe-run` exit with exit-code = 0
 pub fn exit() -> ! {

@@ -33,7 +33,7 @@ pub fn read_temp(twim: &mut Twim<TWIM0>) -> Result<f32, SensorError> {
 }
 
 /// Read emissivity from the sensor.
-pub fn read_emissivity(twim: &mut Twim<TWIM0>) -> Result<f32, SensorError> {
+pub fn _read_emissivity(twim: &mut Twim<TWIM0>) -> Result<f32, SensorError> {
     let mut data = [0; 3];
     twim.write_read(SENSOR_ADDR, &[EMIS_EEPROM_CMD], &mut data)
         .ok();
@@ -52,8 +52,6 @@ pub fn set_emissivity(
     if !(0.1..=1.).contains(&emis) {
         panic!("Emissivity must be between 0.1 and 1.0.")
     }
-
-    defmt::warn!("SETTING EMIS: {}", emis);
 
     let eps = (emis * 65535.) as u16;
 
