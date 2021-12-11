@@ -71,7 +71,7 @@ pub fn set_emissivity(
         EMIS_EEPROM_CMD,
         eps as u8,
         (eps >> 8) as u8,
-    ]); // todo TS
+    ]);
     twim.write(
         SENSOR_ADDR,
         &[EMIS_EEPROM_CMD, eps as u8, (eps >> 8) as u8, pec],
@@ -117,8 +117,9 @@ pub fn sleep(twim: &mut Twim<TWIM0>, scl: &mut Pin) {
 /// Note: "On-chip IIR filter is skipped for the very first measurement (post-wake)"
 pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
     // Set SCL and SDA to output pins so we can set them manually.
-    // todo: We probably don't need to set SCL to be an output pin here, since
-    // todo it's already set that way during the sleep procedure.
+    // We probably don't need to set SCL to be an output pin here, since
+    // it's already set that way during the sleep procedure, but do to make the procedure
+    // more robust to future changes.
 
     // Don't allow RTC interrupts to fire here, eg during our WFI delays. They shouldn't, but
     // just in case.

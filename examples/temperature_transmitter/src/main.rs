@@ -1,3 +1,8 @@
+//! This program is the firmware for the Stove Thermometer's sensor unit. It periodically reads
+//! temperature from an MLX90614 IR thermometer, and transmits using Nordic's ESB low-power RF
+//! protocol. If readings are below a threshhold, increases the sleep time between readings to save power.
+//! Intended to be powered by a coin cell, eg CR2032 for a period of time measured in months.
+
 #![no_main]
 #![no_std]
 
@@ -142,8 +147,6 @@ fn transmit(
         if response.len() < 2 {
             // defmt::error!("ERROR RESPONSE LEN");
         } else {
-            // defmt::info!("RESPONSE: {} {} {}", response[0], response[1], response[2]);
-
             // Change emissivity if requested by the base unit. Response[1] == 1 means the emissivity
             // has changed.
             if response[0] == SUCCESS_BYTE {
@@ -157,7 +160,6 @@ fn transmit(
                         _ => 0.9, // note: This shouldn't happen.
                     };
 
-                    // defmt::error!("SETTING EMIS: {}", emis);
                     sensor::set_emissivity(emis, twim, delay).ok();
                 }
             }
@@ -210,7 +212,7 @@ mod app {
         // ups on both SCL and SDA. See `sensor::sleep` and `sensor::wake` for more details.
         // This is fine, since we don't need clock stretching.
         // let mut scl = Pin::new(Port::P0, 20, Dir::Output);
-        let mut scl = Pin::new(Port::P0, 20, Dir::Input);
+        let scl = Pin::new(Port::P0, 20, Dir::Input);
 
         // let mut sda = Pin::new(Port::P0, 24, Dir::Output);
         let mut sda = Pin::new(Port::P0, 24, Dir::Input);
