@@ -14,7 +14,7 @@ panic-probe = { version = "0.3.0", features = ["print-defmt"] }
 cortex-m-rtic = { version = "0.6.0-alpha.5"}
 
 # Chip: MDBT50Q-P512K module, based on nRF52833
-nrf-hal = { path = "../../../nrf-hal", features = ["52833", "52833-rt"]}
+nrf-hal = { git = "https://github.com/david-oconnor/nrf-hal", branch="main", features = ["52833", "52833-rt"]}
 smbus-pec = "1.0.0"  # Software PEC.
 num-traits = { version = "0.2.14", default-features = false, features=["libm"] }  # For float rounding and abs.
 
