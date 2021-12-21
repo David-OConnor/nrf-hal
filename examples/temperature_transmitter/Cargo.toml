@@ -17,7 +17,6 @@ cortex-m-rtic = { version = "0.6.0-alpha.5"}
 nrf-hal = { git = "https://github.com/david-oconnor/nrf-hal", branch="main", features = ["52833", "52833-rt"]}
 smbus-pec = "1.0.0"  # Software PEC.
 num-traits = { version = "0.2.14", default-features = false, features=["libm"] }  # For float rounding and abs.
-
 # Enhanced Shockburst; ie Nordic's proprietary RF protocol. Fast ramp-up enabled.
 esb = { git = "https://github.com/thalesfragoso/esb", branch = "master", features = ["52833", "fast-ru"] }
 
