@@ -1,15 +1,15 @@
 [package]
 name = "nrf-hal"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["David O'Connor <david.alan.oconnor@gmail.com>"]
-description = "Hardware abstraction layer for the stm32 chips"
+description = "Hardware abstraction layer for Nordic nRF5x chips"
 keywords = ["no-std", "nrf", "nrf52", "embedded", "embedded-hal"]
 categories = [
     "embedded",
     "hardware-support",
     "no-std",
 ]
-repository = "https://github.com/David-OConnor/stm32-hal"
+repository = "https://github.com/david-OConnor/nrf-hal"
 documentation = "https://docs.rs/stm32-hal2"
 readme = "README.md"
 license = "MIT OR Apache-2.0"

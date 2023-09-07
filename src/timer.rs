@@ -120,9 +120,9 @@ where
 
     /// Set the timer period, in seconds. Overrides the period or frequency set
     /// in the constructor.
-    pub fn set_period(&mut self, time: f32, compare_num: usize) {
-        assert!(time > 0.);
-        self.set_freq(1. / time, compare_num);
+    pub fn set_period(&mut self, period: f32, compare_num: usize) {
+        assert!(period > 0.);
+        self.set_freq(1. / period, compare_num);
     }
 
     /// Set the timer frequency, in Hz. Overrides the period or frequency set

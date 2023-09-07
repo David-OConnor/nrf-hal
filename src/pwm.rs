@@ -22,9 +22,8 @@ use embedded_dma::*;
 const MAX_SEQ_LEN: usize = 0x7FFF;
 
 /// A safe wrapper around the raw peripheral.
-#[derive(Debug)]
 pub struct Pwm<T: Instance> {
-    regs: T,
+    pub regs: T,
 }
 
 #[derive(Clone, Copy)]
@@ -37,7 +36,7 @@ pub enum PwmMode {
     UpAndDown = 1,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Clone, Copy)]
 #[repr(u8)]
 /// See 52833 PS, section 6.16.5.16
 pub enum Prescaler {
@@ -51,6 +50,52 @@ pub enum Prescaler {
     Div128 = 7,
 }
 
+impl Prescaler {
+    /// Return the PWM clock speed, based on a 16Mhz system clock.
+    fn clock_speed(&self) -> u32 {
+        match self {
+            Self::Div1 => 16_000_000,
+            Self::Div2 => 8_000_000,
+            Self::Div4 => 4_000_000,
+            Self::Div8 => 2_000_000,
+            Self::Div16 => 1_000_000,
+            Self::Div32 => 500_000,
+            Self::Div64 => 250_000,
+            Self::Div128 => 125_000,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+#[repr(u8)]
+/// How a sequence is read from RAM and spread to the compare registerSee 52833 PS,
+/// section 6.16.5.17: Decoder. Sets DECODER register, LOAD field.
+pub enum DecoderLoad {
+    /// 1st half word (16-bit) used in all PWM channels 0..3
+    Common = 0,
+    /// 1st half word (16-bit) used in channel 0..1; 2nd word in
+    /// channel 2..3
+    Grouped = 1,
+    /// 1st half word (16-bit) in ch.0; 2nd in ch.1; ...; 4th in ch.3
+    Individual = 2,
+    /// 1st half word (16-bit) in ch.0; 2nd in ch.1; ...; 4th in
+    /// COUNTERTOP
+    WaveForm = 3,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+/// Selects source for advancing the active sequence. See 52833 PS, section 6.16.5.17: Decoder.
+/// Sets DECODER register, MODE field.
+pub enum DecoderMode {
+    /// SEQ[n].REFRESH is used to determine loading internal
+    /// compare registers
+    RefreshCount = 0,
+    /// NEXTSTEP task causes a new value to be loaded to internal
+    /// compare registers
+    NextStep = 1,
+}
+
 pub struct PwmConfig {
     /// Selects operating mode of the wave counter. Defaults to Up.
     pub mode: PwmMode,
@@ -58,6 +103,11 @@ pub struct PwmConfig {
     pub prescaler: Prescaler,
     /// Number of playbacks of a loop. Defaults to 0.
     pub loop_: u16,
+    /// How a sequence is read from RAM and spread to the
+    /// compare register. Defaults to individual.
+    pub decoder_load: DecoderLoad,
+    /// Selects source for advancing the active sequence. Deafults to refresh count.
+    pub decoder_mode: DecoderMode,
 }
 
 impl Default for PwmConfig {
@@ -65,7 +115,9 @@ impl Default for PwmConfig {
         Self {
             mode: PwmMode::Up,
             prescaler: Prescaler::Div1,
-            loop_: 0
+            loop_: 0,
+            decoder_load: DecoderLoad::Individual,
+            decoder_mode: DecoderMode::RefreshCount,
         }
     }
 }
@@ -75,24 +127,27 @@ where
     T: Instance,
 {
     /// Takes ownership of the peripheral and applies sane defaults.
-    pub fn new(regs: T, cfg: PwmConfig) -> Pwm<T> {
-        compiler_fence(Ordering::SeqCst);
+    /// See PS, section: 6.16.1 Wave counter, for similar C code.
+    pub fn new(regs: T, freq: f32, cfg: PwmConfig) -> Pwm<T> {
         regs.enable.write(|w| w.enable().enabled());
         regs.mode.write(|w| w.updown().bit(cfg.mode as u8 != 0));
         regs.prescaler.write(|w| w.prescaler().bits(cfg.prescaler as u8));
-        regs.countertop
-            .write(|w| unsafe { w.countertop().bits(32767) });
         regs.loop_.write(|w| unsafe { w.cnt().bits(cfg.loop_) });
+
         regs.decoder.write(|w| {
-            w.load().individual();
-            w.mode().refresh_count()
+            w.load().bits(cfg.decoder_load as u8);
+            w.mode().bit(cfg.decoder_mode as u8 != 0)
         });
+
         regs.seq0.refresh.write(|w| unsafe { w.bits(0) });
         regs.seq0.enddelay.write(|w| unsafe { w.bits(0) });
         regs.seq1.refresh.write(|w| unsafe { w.bits(0) });
         regs.seq1.enddelay.write(|w| unsafe { w.bits(0) });
 
-        Self { regs }
+        let mut result = Self { regs };
+
+        result.set_freq(freq);
+        result
     }
 
     /// Sets the PWM clock prescaler.
@@ -133,19 +188,14 @@ where
     /// Sets the PWM output frequency, in Hz.
     #[inline(always)]
     pub fn set_freq(&mut self, freq: f32) {
-        let duty = match self.prescaler() {
-            Prescaler::Div1 => 16_000_000. / freq,
-            Prescaler::Div2 => 8_000_000. / freq,
-            Prescaler::Div4 => 4_000_000. / freq,
-            Prescaler::Div8 => 2_000_000. / freq,
-            Prescaler::Div16 => 1_000_000. / freq,
-            Prescaler::Div32 => 500_000. / freq,
-            Prescaler::Div64 => 250_000. / freq,
-            Prescaler::Div128 => 125_000. / freq,
-        };
+        // PWM period: TPWM(Up)= TPWM_CLK * COUNTERTOP (From PS)
+        // countertop = clock x period = clk / freq
+
+        let counter_top = self.prescaler().clock_speed() as f32 / freq;
+
         match self.counter_mode() {
-            CounterMode::Up => self.set_counter_top((duty as u32).min(32767) as u16),
-            CounterMode::UpAndDown => self.set_counter_top((duty as u32 / 2).min(32767) as u16),
+            CounterMode::Up => self.set_counter_top((counter_top as u32).min(32767) as u16),
+            CounterMode::UpAndDown => self.set_counter_top((counter_top as u32 / 2).min(32767) as u16),
         };
     }
 
@@ -178,7 +228,7 @@ where
     ///
     /// Modifying the pin configuration while the PWM instance is enabled is not recommended.
     #[inline(always)]
-    pub fn set_output_pin(&self, channel: PwmChannel_, pin: &Pin) -> &Self {
+    pub fn set_output_pin(&self, channel: PwmChannel, pin: &Pin) -> &Self {
         self.regs.psel.out[channel as usize].write(|w| unsafe {
             w.port().bit(pin.port as u8 != 0);
             #[cfg(feature = "53")]
@@ -205,20 +255,20 @@ where
     /// at the rate defined in SEQ[n]REFRESH and/or DECODER.MODE. Causes PWM generation to start if not
     /// running.
     #[inline(always)]
-    pub fn seqstart(&self, seq: usize) {
+    pub fn start_seq_(&self, seq: usize) {
         self.regs.tasks_seqstart[seq].write(|w| w.tasks_seqstart().set_bit());
     }
 
     /// Enables a PWM channel.
     #[inline(always)]
-    pub fn enable_channel(&self, channel: PwmChannel_) -> &Self {
+    pub fn enable_channel(&self, channel: PwmChannel) -> &Self {
         self.regs.psel.out[channel as usize].modify(|_r, w| w.connect().connected());
         self
     }
 
     /// Disables a PWM channel.
     #[inline(always)]
-    pub fn disable_channel(&self, channel: PwmChannel_) -> &Self {
+    pub fn disable_channel(&self, channel: PwmChannel) -> &Self {
         self.regs.psel.out[channel as usize].modify(|_r, w| w.connect().disconnected());
         self
     }
@@ -257,24 +307,24 @@ where
 
     /// Cofigures how a sequence is read from RAM and is spread to the compare register.
     #[inline(always)]
-    pub fn set_load_mode(&self, mode: LoadMode) -> &Self {
-        self.regs.decoder.modify(|_r, w| w.load().bits(mode.into()));
-        if mode == LoadMode::Waveform {
-            self.disable_channel(PwmChannel_::C3);
+    pub fn set_load_mode(&self, mode: DecoderLoad) -> &Self {
+        self.regs.decoder.modify(|_, w| w.load().bits(mode as u8));
+        if mode == DecoderLoad::WaveForm {
+            self.disable_channel(PwmChannel::C3);
         } else {
-            self.enable_channel(PwmChannel_::C3);
+            self.enable_channel(PwmChannel::C3);
         }
         self
     }
 
     /// Returns how a sequence is read from RAM and is spread to the compare register.
     #[inline(always)]
-    pub fn load_mode(&self) -> LoadMode {
+    pub fn load_mode(&self) -> DecoderLoad {
         match self.regs.decoder.read().load().bits() {
-            0 => LoadMode::Common,
-            1 => LoadMode::Grouped,
-            2 => LoadMode::Individual,
-            3 => LoadMode::Waveform,
+            0 => DecoderLoad::Common,
+            1 => DecoderLoad::Grouped,
+            2 => DecoderLoad::Individual,
+            3 => DecoderLoad::WaveForm,
             _ => unreachable!(),
         }
     }
@@ -340,13 +390,20 @@ where
         buffer.copy_from_slice(&[duty.min(self.counter_top()) & 0x7FFF; 4][..]);
         T::buffer().set(buffer);
         self.one_shot();
-        self.set_load_mode(LoadMode::Common);
+        self.set_load_mode(DecoderLoad::Common);
         self.regs
             .seq0
             .ptr
             .write(|w| unsafe { w.bits(T::buffer().as_ptr() as u32) });
         self.regs.seq0.cnt.write(|w| unsafe { w.bits(1) });
         self.start_seq(Seq::Seq0);
+    }
+
+    /// API bandaid to deal with `set_duty_on_common` being the previous way to start.
+    pub fn start(&mut self, duty: f32) {
+        self.set_duty_on_common(
+            (self.counter_top() as f32 * duty) as u16
+        );
     }
 
     /// Sets inverted duty cycle (15 bit) for all PWM channels.
@@ -356,7 +413,7 @@ where
         buffer.copy_from_slice(&[duty.min(self.counter_top()) | 0x8000; 4][..]);
         T::buffer().set(buffer);
         self.one_shot();
-        self.set_load_mode(LoadMode::Common);
+        self.set_load_mode(DecoderLoad::Common);
         self.regs
             .seq0
             .ptr
@@ -384,7 +441,7 @@ where
         buffer[usize::from(group)] = duty.min(self.counter_top()) & 0x7FFF;
         T::buffer().set(buffer);
         self.one_shot();
-        self.set_load_mode(LoadMode::Grouped);
+        self.set_load_mode(DecoderLoad::Grouped);
         self.regs
             .seq0
             .ptr
@@ -400,7 +457,7 @@ where
         buffer[usize::from(group)] = duty.min(self.counter_top()) | 0x8000;
         T::buffer().set(buffer);
         self.one_shot();
-        self.set_load_mode(LoadMode::Grouped);
+        self.set_load_mode(DecoderLoad::Grouped);
         self.regs
             .seq0
             .ptr
@@ -423,12 +480,12 @@ where
 
     /// Sets duty cycle (15 bit) for a PWM channel.
     /// Will replace any ongoing sequence playback and the other channels will return to their previously set value.
-    pub fn set_duty_on(&self, channel: PwmChannel_, duty: u16) {
+    pub fn set_duty_on(&self, channel: PwmChannel, duty: u16) {
         let mut buffer = T::buffer().get();
         buffer[channel as usize] = duty.min(self.counter_top()) & 0x7FFF;
         T::buffer().set(buffer);
         self.one_shot();
-        self.set_load_mode(LoadMode::Individual);
+        self.set_load_mode(DecoderLoad::Individual);
         self.regs
             .seq0
             .ptr
@@ -439,12 +496,12 @@ where
 
     /// Sets inverted duty cycle (15 bit) for a PWM channel.
     /// Will replace any ongoing sequence playback and the other channels will return to their previously set value.
-    pub fn set_duty_off(&self, channel: PwmChannel_, duty: u16) {
+    pub fn set_duty_off(&self, channel: PwmChannel, duty: u16) {
         let mut buffer = T::buffer().get();
         buffer[channel as usize] = duty.min(self.counter_top()) | 0x8000;
         T::buffer().set(buffer);
         self.one_shot();
-        self.set_load_mode(LoadMode::Individual);
+        self.set_load_mode(DecoderLoad::Individual);
         self.regs
             .seq0
             .ptr
@@ -455,13 +512,13 @@ where
 
     /// Returns the duty cycle value for a PWM channel.
     #[inline(always)]
-    pub fn duty_on(&self, channel: PwmChannel_) -> u16 {
+    pub fn duty_on(&self, channel: PwmChannel) -> u16 {
         self.duty_on_value(channel as usize)
     }
 
     /// Returns the inverted duty cycle value for a PWM group.
     #[inline(always)]
-    pub fn duty_off(&self, channel: PwmChannel_) -> u16 {
+    pub fn duty_off(&self, channel: PwmChannel) -> u16 {
         self.duty_off_value(channel as usize)
     }
 
@@ -526,8 +583,8 @@ where
     pub fn start_seq(&self, seq: Seq) {
         compiler_fence(Ordering::SeqCst);
         self.regs.enable.write(|w| w.enable().enabled());
-        self.regs.tasks_seqstart[usize::from(seq)].write(|w| unsafe { w.bits(1) });
-        while self.regs.events_seqstarted[usize::from(seq)].read().bits() == 0 {}
+        self.regs.tasks_seqstart[seq as usize].write(|w| unsafe { w.bits(1) });
+        while self.regs.events_seqstarted[seq as usize].read().bits() == 0 {}
         self.regs.events_seqend[0].write(|w| w);
         self.regs.events_seqend[1].write(|w| w);
     }
@@ -661,9 +718,9 @@ where
             PwmEvent::LoopsDone => self.regs.events_loopsdone.read().bits() != 0,
             PwmEvent::PwmPeriodEnd => self.regs.events_pwmperiodend.read().bits() != 0,
             PwmEvent::SeqStarted(seq) => {
-                self.regs.events_seqstarted[usize::from(seq)].read().bits() != 0
+                self.regs.events_seqstarted[seq as usize].read().bits() != 0
             }
-            PwmEvent::SeqEnd(seq) => self.regs.events_seqend[usize::from(seq)].read().bits() != 0,
+            PwmEvent::SeqEnd(seq) => self.regs.events_seqend[seq as usize].read().bits() != 0,
         }
     }
 
@@ -674,8 +731,8 @@ where
             PwmEvent::Stopped => self.regs.events_stopped.write(|w| w),
             PwmEvent::LoopsDone => self.regs.events_loopsdone.write(|w| w),
             PwmEvent::PwmPeriodEnd => self.regs.events_pwmperiodend.write(|w| w),
-            PwmEvent::SeqStarted(seq) => self.regs.events_seqstarted[usize::from(seq)].write(|w| w),
-            PwmEvent::SeqEnd(seq) => self.regs.events_seqend[usize::from(seq)].write(|w| w),
+            PwmEvent::SeqStarted(seq) => self.regs.events_seqstarted[seq as usize].write(|w| w),
+            PwmEvent::SeqEnd(seq) => self.regs.events_seqend[seq as usize].write(|w| w),
         }
     }
 
@@ -747,12 +804,10 @@ where
 }
 
 /// A Pwm sequence wrapper
-#[derive(Debug)]
 pub struct PwmSeq<T: Instance, B0, B1> {
     inner: Option<Inner<T, B0, B1>>,
 }
 
-#[derive(Debug)]
 struct Inner<T: Instance, B0, B1> {
     seq0_buffer: Option<B0>,
     seq1_buffer: Option<B1>,
@@ -819,7 +874,7 @@ where
 #[cfg(feature = "embedded-hal")]
 #[cfg_attr(docsrs, doc(cfg(feature = "embedded-hal")))]
 impl<T: Instance> embedded_hal::Pwm for Pwm<T> {
-    type Channel = PwmChannel_;
+    type Channel = PwmChannel;
     type Duty = u16;
     type Time = Hertz;
 
@@ -855,56 +910,16 @@ impl<T: Instance> embedded_hal::Pwm for Pwm<T> {
     }
 }
 
-/// PWM channel
-#[derive(Debug)]
-pub struct PwmChannel<'a, T: Instance> {
-    pwm: &'a Pwm<T>,
-    channel: PwmChannel_,
-}
-
-impl<'a, T: Instance> PwmChannel<'a, T> {
-    pub fn new(pwm: &'a Pwm<T>, channel: PwmChannel_) -> Self {
-        Self { pwm, channel }
-    }
-
-    pub fn enable(&self) {
-        self.pwm.enable_channel(self.channel);
-    }
-
-    pub fn disable(&self) {
-        self.pwm.disable_channel(self.channel);
-    }
-
-    pub fn max_duty(&self) -> u16 {
-        self.pwm.counter_top()
-    }
-    pub fn set_duty(&self, duty: u16) {
-        self.pwm.set_duty_on(self.channel, duty);
-    }
-    pub fn set_duty_on(&self, duty: u16) {
-        self.pwm.set_duty_on(self.channel, duty);
-    }
-    pub fn set_duty_off(&self, duty: u16) {
-        self.pwm.set_duty_off(self.channel, duty);
-    }
-    pub fn duty_on(&self) -> u16 {
-        self.pwm.duty_on(self.channel)
-    }
-    pub fn duty_off(&self) -> u16 {
-        self.pwm.duty_off(self.channel)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
 #[repr(usize)]
-pub enum PwmChannel_ {
+pub enum PwmChannel {
     C0 = 0,
     C1 = 1,
     C2 = 2,
     C3 = 3,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum Group {
     G0,
     G1,
@@ -915,31 +930,14 @@ impl From<Group> for usize {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub enum LoadMode {
-    Common,
-    Grouped,
-    Individual,
-    Waveform,
-}
-impl From<LoadMode> for u8 {
-    fn from(variant: LoadMode) -> Self {
-        variant as _
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
+#[repr(usize)]
 pub enum Seq {
-    Seq0,
-    Seq1,
-}
-impl From<Seq> for usize {
-    fn from(variant: Seq) -> Self {
-        variant as _
-    }
+    Seq0 = 0,
+    Seq1 = 1,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum CounterMode {
     Up,
     UpAndDown,
@@ -953,14 +951,14 @@ impl From<CounterMode> for bool {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy)]
 pub enum Loop {
     Disabled,
     Times(u16),
     Inf,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum PwmEvent {
     Stopped,
     LoopsDone,
@@ -969,7 +967,7 @@ pub enum PwmEvent {
     SeqEnd(Seq),
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum StepMode {
     Auto,
     NextStep,
@@ -983,7 +981,6 @@ impl From<StepMode> for bool {
     }
 }
 
-#[derive(Debug)]
 pub enum Error {
     DMABufferNotInDataMemory,
     BufferTooLong,

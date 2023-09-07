@@ -6,18 +6,9 @@
 #![no_main]
 #![no_std]
 
-use core::{
-    cell::{Cell, RefCell},
-    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
-};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use cortex_m::{
-    asm,
-    delay::Delay,
-    interrupt::{free, Mutex},
-    peripheral::NVIC,
-};
-use cortex_m_rt::entry;
+use cortex_m::{asm, delay::Delay};
 
 use num_traits::float::Float; // float absolute value
 
@@ -27,8 +18,7 @@ use panic_probe as _;
 use nrf_hal::{
     clocks::Clocks,
     gpio::{Dir, Drive, Pin, Port, Pull},
-    pac::{self, interrupt, RTC0, TIMER0, TIMER1, TIMER2, TWIM0},
-    prelude::*,
+    pac::{self, RTC0, TIMER0, TIMER1, TIMER2, TWIM0},
     rtc::{Rtc, RtcCompare, RtcInterrupt},
     timer::{Timer, TimerMode, TimerShortcut},
     twim::{Twim, TwimFreq},
@@ -36,7 +26,7 @@ use nrf_hal::{
 
 use esb::{
     consts::*, irq::StatePTX, Addresses, BBBuffer, ConfigBuilder, ConstBBBuffer, Error, EsbApp,
-    EsbBuffer, EsbHeader, EsbIrq, IrqTimer, TxPower,
+    EsbBuffer, EsbHeader, EsbIrq, IrqTimer,
 };
 
 mod sensor;
@@ -65,7 +55,6 @@ const MAX_PAYLOAD_SIZE: u8 = 16;
 // must match those used by the base firmware.
 const SUCCESS_BYTE: u8 = 20;
 
-// SLEEP_TIME_IDLE can be 60s for battery operations
 const SLEEP_TIME_IDLE: f32 = 45.; // seconds
                                   // Perhaps the active sleep time can be short, since most of the power is
                                   // used by the display? Or not. Note that the sensor will not produce
@@ -170,7 +159,7 @@ fn transmit(
 
     let mut packet = esb_app.grant_packet(esb_header).unwrap();
     let length = msg.len();
-    packet[..length].copy_from_slice(&msg);
+    packet[..length].copy_from_slice(msg);
     packet.commit(length);
     esb_app.start_tx();
 }
@@ -200,7 +189,7 @@ mod app {
 
     #[init]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        // Cortex-M peripherals
+        // Set up Cortex-M peripherals
         let cp = cx.core;
         // Set up microcontroller peripherals
         let dp = pac::Peripherals::take().unwrap();
@@ -211,19 +200,12 @@ mod app {
         // SCL, and drive it low when the sensor sleeps. In fact, we use software pull
         // ups on both SCL and SDA. See `sensor::sleep` and `sensor::wake` for more details.
         // This is fine, since we don't need clock stretching.
-        // let mut scl = Pin::new(Port::P0, 20, Dir::Output);
         let scl = Pin::new(Port::P0, 20, Dir::Input);
 
         // let mut sda = Pin::new(Port::P0, 24, Dir::Output);
         let mut sda = Pin::new(Port::P0, 24, Dir::Input);
         sda.pull(Pull::Up);
         sda.drive(Drive::S0D1);
-
-
-        // todo TS
-        // scl.set_high();
-        // sda.set_high();
-        // loop {}
 
         let twim = Twim::new(dp.TWIM0, &scl, &sda, TwimFreq::K100);
 
@@ -264,10 +246,9 @@ mod app {
         .unwrap();
 
         let esb_cfg = ConfigBuilder::default()
-            // .tx_power(TxPower::POS4DBM) // ts. defaults to 0.
             .maximum_transmit_attempts(3)
             .max_payload_size(MAX_PAYLOAD_SIZE)
-            .wait_for_ack_timeout(300) // TS. defaults to 120us.
+            // .wait_for_ack_timeout(300) // TS. defaults to 120us.
             .check()
             .unwrap();
 
@@ -407,7 +388,7 @@ mod app {
                 }
 
                 let reading = sensor::read_temp(twim).unwrap_or(TEMP_ERROR_FLAG);
-                // defmt::println!("READING {}", reading);
+                defmt::println!("READING {}", reading);
                 // Sometimes after sensor wake, our readings are -273.15. Unknown cause. Note that this is the same
                 // reading we get if attempting to take a reading while the sensor is asleep.
                 let temp_valid =

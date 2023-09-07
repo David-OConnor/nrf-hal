@@ -5,7 +5,7 @@ use cortex_m::{asm::wfi, delay::Delay};
 
 use nrf_hal::{
     gpio::{Dir, Drive, Pin, Pull},
-    pac::{P0, TIMER1, TWIM0},
+    pac::{TIMER1, TWIM0},
     timer::Timer,
     twim::Twim,
 };
@@ -121,11 +121,8 @@ pub fn wake(scl: &mut Pin, sda: &mut Pin, timer: &mut Timer<TIMER1>) {
     // it's already set that way during the sleep procedure, but do to make the procedure
     // more robust to future changes.
 
-    // Don't allow RTC interrupts to fire here, eg during our WFI delays. They shouldn't, but
-    // just in case.
-
     // Disconnect TWIM from the pins as well, or we won't be able to manually
-    // set them pins.
+    // set them.
     unsafe {
         (*TWIM0::ptr())
             .psel
